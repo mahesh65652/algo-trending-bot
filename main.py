@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from smartapi import SmartConnect
+from SmartApi.smartConnect import SmartConnect
 
 # Load .env variables
 load_dotenv()
