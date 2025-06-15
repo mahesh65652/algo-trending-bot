@@ -1,4 +1,4 @@
-smartapi
+smartapi-python
 gspread
 oauth2client
 python-dotenv
