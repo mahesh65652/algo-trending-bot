@@ -1,3 +1,12 @@
+
+import os
+import json
+
+# Save GOOGLE_CREDS_JSON content to credentials.json
+google_creds = os.environ.get("GOOGLE_CREDS_JSON")
+if google_creds:
+    with open("credentials.json", "w") as f:
+        f.write(google_creds)
 import os
 import json
 from dotenv import load_dotenv
