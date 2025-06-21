@@ -3,30 +3,26 @@ name: Run Algo Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes
+    - cron: '*/15 * * * *'
 
 jobs:
   run:
     runs-on: ubuntu-latest
-
-    env:
-      ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-      ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
-      CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
-      TOTP: ${{ secrets.TOTP }}
-      SHEET_ID: ${{ secrets.SHEET_ID }}
-
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Bot
-        run: python main.py
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Run Algo Bot
+      env:
+        ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+        ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
+        CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
+        TOTP: ${{ secrets.TOTP }}
+        SHEET_ID: ${{ secrets.SHEET_ID }}
+        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+      run: python main.py
 
