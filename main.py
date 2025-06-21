@@ -1,7 +1,5 @@
-
 import os
 import json
-
 # Save GOOGLE_CREDS_JSON content to credentials.json
 google_creds = os.environ.get("GOOGLE_CREDS_JSON")
 if google_creds:
