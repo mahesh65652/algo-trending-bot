@@ -1,12 +1,5 @@
 import os
 import json
-# Save GOOGLE_CREDS_JSON content to credentials.json
-google_creds = os.environ.get("GOOGLE_CREDS_JSON")
-if google_creds:
-    with open("credentials.json", "w") as f:
-        f.write(google_creds)
-import os
-import json
 from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -15,6 +8,12 @@ from SmartApi.smartConnect import SmartConnect
 # Load environment variables
 load_dotenv()
 
+# ✅ Write GOOGLE_CREDS_JSON content to credentials.json
+google_creds = os.environ.get("GOOGLE_CREDS_JSON")
+if google_creds:
+    with open("credentials.json", "w") as f:
+        f.write(google_creds)
+
 # ENV Variables
 api_key = os.getenv("ANGEL_API_KEY")
 api_secret = os.getenv("ANGEL_API_SECRET")
@@ -22,20 +21,14 @@ client_code = os.getenv("CLIENT_CODE")
 totp = os.getenv("TOTP")
 sheet_id = os.getenv("SHEET_ID")
 
-# ✅ Google Sheet Access using credentials from GitHub Secrets
+# ✅ Google Sheet Access
 def get_signals():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-    # 👇 Load credentials securely from GitHub Secret
-    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-    creds_dict = json.loads(creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(sheet_id).worksheet("sheet1")  # change to your tab name if needed
+    sheet = client.open_by_key(sheet_id).worksheet("sheet1")  # your sheet tab name
 
     data = sheet.get_all_records()
-
     signals = []
     for row in data:
         if row.get("Action") in ["BUY", "SELL"]:
@@ -48,14 +41,14 @@ def angel_login():
     data = obj.generateSession(client_code, api_secret, totp)
     return obj
 
-# ✅ Place Order Function
+# ✅ Place Order
 def place_order(obj, symbol, action):
     print(f"Placing {action} order for {symbol}")
     try:
         orderparams = {
             "variety": "NORMAL",
             "tradingsymbol": symbol,
-            "symboltoken": "99926009",  # Replace this with dynamic token if needed
+            "symboltoken": "99926009",  # <-- Update this dynamically per symbol if needed
             "transactiontype": action,
             "exchange": "MCX",
             "ordertype": "MARKET",
@@ -71,7 +64,7 @@ def place_order(obj, symbol, action):
     except Exception as e:
         print("Order Failed:", e)
 
-# ✅ Main Runner
+# ✅ Main Entry
 if __name__ == "__main__":
     signals = get_signals()
     if signals:
