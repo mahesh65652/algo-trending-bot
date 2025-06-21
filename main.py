@@ -1,25 +1,32 @@
 import os
+import json
 from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi.smartConnect import SmartConnect
 
-# Load .env variables
+# Load environment variables
 load_dotenv()
 
-# Environment variables
+# ENV Variables
 api_key = os.getenv("ANGEL_API_KEY")
 api_secret = os.getenv("ANGEL_API_SECRET")
 client_code = os.getenv("CLIENT_CODE")
 totp = os.getenv("TOTP")
 sheet_id = os.getenv("SHEET_ID")
 
-# Step 1: Google Sheet Data Fetch
+# ✅ Google Sheet Access using credentials from GitHub Secrets
 def get_signals():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+
+    # 👇 Load credentials securely from GitHub Secret
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(sheet_id).sheet1
+    sheet = client.open_by_key(sheet_id).worksheet("sheet1")  # change to your tab name if needed
+
     data = sheet.get_all_records()
 
     signals = []
@@ -28,22 +35,22 @@ def get_signals():
             signals.append({"symbol": row["Symbol"], "action": row["Action"]})
     return signals
 
-# Step 2: Angel One Login
+# ✅ Angel One Login
 def angel_login():
     obj = SmartConnect(api_key=api_key)
     data = obj.generateSession(client_code, api_secret, totp)
     return obj
 
-# Step 3: Place Order via Angel One
+# ✅ Place Order Function
 def place_order(obj, symbol, action):
     print(f"Placing {action} order for {symbol}")
     try:
         orderparams = {
             "variety": "NORMAL",
             "tradingsymbol": symbol,
-            "symboltoken": "99926009",  # Replace with real token
+            "symboltoken": "99926009",  # Replace this with dynamic token if needed
             "transactiontype": action,
-            "exchange": "NSE",
+            "exchange": "MCX",
             "ordertype": "MARKET",
             "producttype": "INTRADAY",
             "duration": "DAY",
@@ -57,13 +64,13 @@ def place_order(obj, symbol, action):
     except Exception as e:
         print("Order Failed:", e)
 
-# Main Flow
+# ✅ Main Runner
 if __name__ == "__main__":
     signals = get_signals()
     if signals:
         angel = angel_login()
         for sig in signals:
-            place_order(angel, sig['symbol'], sig['action'])
+            place_order(angel, sig["symbol"], sig["action"])
     else:
         print("No Buy/Sell Signals Found.")
 
