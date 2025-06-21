@@ -10,12 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
+
     - name: Install dependencies
       run: pip install -r requirements.txt
+
+    - name: Save Google Credentials to file 🔐
+      run: |
+        echo "${{ secrets.GOOGLE_CREDS_JSON }}" > credentials.json
+
     - name: Run Algo Bot
       env:
         ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
@@ -23,6 +30,4 @@ jobs:
         CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
         TOTP: ${{ secrets.TOTP }}
         SHEET_ID: ${{ secrets.SHEET_ID }}
-        GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
       run: python main.py
-
