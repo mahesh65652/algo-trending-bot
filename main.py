@@ -1,74 +1,60 @@
 import os
 import json
-from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi.smartConnect import SmartConnect
+import pyotp
 
-# ✅ Save Google Service Account JSON from GitHub Secret to credentials.json
-google_creds = os.environ.get("GOOGLE_CREDS_JSON")
-if google_creds:
-    with open("credentials.json", "w") as f:
-        f.write(google_creds)
+# ✅ Save credentials.json file from GitHub Secrets (already done in GitHub Actions step)
 
-# ✅ Load environment variables from .env or GitHub Secrets
-load_dotenv()
+# ✅ Authenticate Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
 
+sheet_id = os.getenv("SHEET_ID")
+sheet = client.open_by_key(sheet_id).sheet1
+data = sheet.get_all_records()
+
+# ✅ Angel One SmartAPI credentials from GitHub Secrets
 api_key = os.getenv("ANGEL_API_KEY")
 api_secret = os.getenv("ANGEL_API_SECRET")
 client_code = os.getenv("CLIENT_CODE")
-totp = os.getenv("TOTP")
-sheet_id = os.getenv("SHEET_ID")
+totp_key = os.getenv("TOTP")  # TOTP secret key for 2FA
 
-# ✅ Read signals from Google Sheet
-def get_signals():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(sheet_id).worksheet("sheet1")  # Your sheet tab name
-    data = sheet.get_all_records()
+# ✅ Generate TOTP
+totp = pyotp.TOTP(totp_key).now()
 
-    signals = []
-    for row in data:
-        if row.get("Action") in ["BUY", "SELL"]:
-            signals.append({"symbol": row["Symbol"], "action": row["Action"]})
-    return signals
+# ✅ Initialize SmartConnect
+smart_api = SmartConnect(api_key)
+session = smart_api.generateSession(client_code, totp, api_secret)
 
-# ✅ Angel One Login
-def angel_login():
-    obj = SmartConnect(api_key=api_key)
-    data = obj.generateSession(client_code, api_secret, totp)
-    return obj
+# ✅ Place order for each signal
+for row in data:
+    symbol = row['Symbol']
+    signal = row['Final Signal'].strip().upper()
 
-# ✅ Place Order
-def place_order(obj, symbol, action):
-    print(f"Placing {action} order for {symbol}")
-    try:
-        orderparams = {
-            "variety": "NORMAL",
-            "tradingsymbol": symbol,
-            "symboltoken": "99926009",  # ✔️ Replace this with correct token later
-            "transactiontype": action,
-            "exchange": "MCX",
-            "ordertype": "MARKET",
-            "producttype": "INTRADAY",
-            "duration": "DAY",
-            "price": "0",
-            "squareoff": "0",
-            "stoploss": "0",
-            "quantity": "1"
-        }
-        response = obj.placeOrder(orderparams)
-        print("Order Response:", response)
-    except Exception as e:
-        print("Order Failed:", e)
+    if signal in ["BUY", "SELL"]:
+        print(f"🔁 Processing {symbol} for signal: {signal}")
 
-# ✅ MAIN EXECUTION
-if __name__ == "__main__":
-    signals = get_signals()
-    if signals:
-        angel = angel_login()
-        for sig in signals:
-            place_order(angel, sig["symbol"], sig["action"])
-    else:
-        print("No Buy/Sell Signals Found.")
+        try:
+            order_params = {
+                "variety": "NORMAL",
+                "tradingsymbol": symbol,
+                "symboltoken": "99926009",  # ❗Update this dynamically later
+                "transactiontype": signal,
+                "exchange": "NSE",
+                "ordertype": "MARKET",
+                "producttype": "INTRADAY",
+                "duration": "DAY",
+                "price": "0",
+                "squareoff": "0",
+                "stoploss": "0",
+                "quantity": "1"
+            }
+
+            order_id = smart_api.placeOrder(order_params)
+            print(f"✅ Order Placed for {symbol} | ID: {order_id}")
+
+        except Exception as e:
+            print(f"❌ Failed to place order for {symbol}: {e}")
