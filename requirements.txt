@@ -1,7 +1,5 @@
 smartapi-python
 gspread
 oauth2client
+pyotp
 python-dotenv
-logzero
-websocket-client
-
