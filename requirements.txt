@@ -1,5 +1,6 @@
-smartapi-python
+SmartApi
+logzero
+pandas
+openpyxl
 gspread
 oauth2client
-pyotp
-python-dotenv
