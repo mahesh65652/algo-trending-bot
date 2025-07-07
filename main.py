@@ -1,9 +1,10 @@
 import os
-import json
 import gspread
+import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi.smartConnect import SmartConnect
 import pyotp
+import time
 
 # ✅ Google Sheets auth
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -12,62 +13,53 @@ client = gspread.authorize(creds)
 
 # ✅ Open Google Sheet
 sheet_id = os.getenv("SHEET_ID")
-sheet_name = os.getenv("SHEET_NAME") or "AutoSignal"
+sheet_name = os.getenv("SHEET_NAME", "AutoSignal")
 sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
 data = sheet.get_all_records()
+df = pd.DataFrame(data)
 
 # ✅ Angel One credentials
 api_key = os.getenv("ANGEL_API_KEY")
 api_secret = os.getenv("ANGEL_API_SECRET")
 client_code = os.getenv("CLIENT_CODE")
 totp_key = os.getenv("TOTP")
-
-# ✅ TOTP for login
 totp = pyotp.TOTP(totp_key).now()
 
 # ✅ Angel One Login
 smart_api = SmartConnect(api_key)
 session = smart_api.generateSession(client_code, totp, api_secret)
-
 if not session.get("access_token"):
-    print("❌ Login Failed. Check credentials or TOTP.")
+    print("❌ Login Failed")
     exit()
 
-# ✅ Fetch token map (symbol → token)
-token_map = {}
-instruments = smart_api.getProfile()["data"].get("exchanges")  # You can load NSE instrument list from file too
+print("✅ Logged in successfully. Starting signal generation...")
 
-# (Optional: you can replace this with a static dict or a file for faster lookup)
-# Example: token_map = {"RELIANCE-EQ": "99926009"}
+# ✅ Main Logic Loop
+final_signals = []
+for i, row in df.iterrows():
+    rsi = float(row.get("RSI", 50))
+    ema = float(row.get("EMA", 0))
+    oi = float(row.get("OI", 0))
+    ltp = float(row.get("LTP", 0))
 
-# ✅ Place order loop
-for row in data:
-    symbol = row.get("Symbol")
-    signal = row.get("Final Signal", "").strip().upper()
+    signal_rsi = "Buy" if rsi < 30 else "Sell" if rsi > 70 else "Hold"
+    signal_ema = "Buy" if ltp > ema else "Sell" if ltp < ema else "Hold"
+    signal_oi = "Buy" if oi > 0 else "Sell" if oi < 0 else "Hold"
 
-    if signal not in ["BUY", "SELL"]:
-        continue
+    signals = [signal_rsi, signal_ema, signal_oi]
+    if signals.count("Buy") >= 2:
+        final = "Buy"
+    elif signals.count("Sell") >= 2:
+        final = "Sell"
+    else:
+        final = "Hold"
 
-    try:
-        # You should have a pre-saved token map for production use
-        symbol_token = row.get("Token") or "99926009"  # fallback
-        order_params = {
-            "variety": "NORMAL",
-            "tradingsymbol": symbol,
-            "symboltoken": symbol_token,
-            "transactiontype": signal,
-            "exchange": "NSE",
-            "ordertype": "MARKET",
-            "producttype": "INTRADAY",
-            "duration": "DAY",
-            "price": "0",
-            "squareoff": "0",
-            "stoploss": "0",
-            "quantity": "1"
-        }
+    final_signals.append(final)
+    print(f"{row.get('Symbol')} → Final Signal: {final}")
 
-        order_id = smart_api.placeOrder(order_params)
-        print(f"✅ Order Placed: {symbol} | Signal: {signal} | ID: {order_id}")
+# ✅ Update sheet with final signal
+for idx, sig in enumerate(final_signals):
+    sheet.update_cell(idx + 2, df.columns.get_loc("Final Signal") + 1, sig)
+    sheet.update_cell(idx + 2, df.columns.get_loc("Action") + 1, sig)
 
-    except Exception as e:
-        print(f"❌ Error placing order for {symbol}: {e}")
+print("✅ All signals updated in Google Sheet.")
