@@ -4,3 +4,4 @@ pandas
 openpyxl
 logzero
 SmartAPI
+oauth2client
