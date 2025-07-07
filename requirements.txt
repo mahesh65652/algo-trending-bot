@@ -1,6 +1,6 @@
-SmartApi
-logzero
+gspread
+google-auth
 pandas
 openpyxl
-gspread
-oauth2client
+logzero
+SmartAPI
