@@ -1,6 +1,9 @@
-name: Run Algo Trading Bot on Push
+name: Run Algo Trading Bot
 
-on: [push]
+on:
+  push:
+  schedule:
+    - cron: "*/15 * * * *"  # हर 15 मिनट पर रन करेगा
 
 jobs:
   build-and-run:
@@ -42,4 +45,3 @@ jobs:
           TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python main.py
-
