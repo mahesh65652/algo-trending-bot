@@ -34,10 +34,15 @@ if not session.get("access_token"):
 
 print("✅ Logged in successfully. Starting signal generation...")
 
-# ✅ Generate Signals
+# ✅ Generate Signals (only if Name == 's')
 final_signals = []
 for i, row in df.iterrows():
     try:
+        # ✅ Only process rows where Name == 's'
+        if str(row.get("Name", "")).strip().lower() != "s":
+            final_signals.append("Hold")
+            continue
+
         rsi = float(row.get("RSI", 50))
         ema = float(row.get("EMA", 0))
         oi = float(row.get("OI", 0))
