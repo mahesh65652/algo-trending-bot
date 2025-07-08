@@ -1,4 +1,3 @@
-
 name: Run Algo Trading Bot
 
 on:
@@ -46,3 +45,4 @@ jobs:
           TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python main.py
+
