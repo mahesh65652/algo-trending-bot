@@ -2,4 +2,4 @@ gspread
 google-auth
 pandas
 pyotp
-SmartApi @ git+https://github.com/angel-one/smartapi-python.git
+smartapi-python @ git+https://github.com/angel-one/smartapi-python.git
