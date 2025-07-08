@@ -1,14 +1,14 @@
 import os
+import time
+import pyotp
 import gspread
 import pandas as pd
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from SmartApi.smartConnect import SmartConnect
-import pyotp
-import time
 
-# ✅ Google Sheets auth
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+# ✅ Google Sheet Auth using google-auth
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
 client = gspread.authorize(creds)
 
 # ✅ Open Google Sheet
@@ -18,7 +18,7 @@ sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
 data = sheet.get_all_records()
 df = pd.DataFrame(data)
 
-# ✅ Angel One credentials
+# ✅ Angel One credentials from GitHub secrets
 api_key = os.getenv("ANGEL_API_KEY")
 api_secret = os.getenv("ANGEL_API_SECRET")
 client_code = os.getenv("CLIENT_CODE")
@@ -34,28 +34,27 @@ if not session.get("access_token"):
 
 print("✅ Logged in successfully. Starting signal generation...")
 
-# ✅ Main Logic Loop
+# ✅ Generate Signals
 final_signals = []
 for i, row in df.iterrows():
-    rsi = float(row.get("RSI", 50))
-    ema = float(row.get("EMA", 0))
-    oi = float(row.get("OI", 0))
-    ltp = float(row.get("LTP", 0))
+    try:
+        rsi = float(row.get("RSI", 50))
+        ema = float(row.get("EMA", 0))
+        oi = float(row.get("OI", 0))
+        ltp = float(row.get("LTP", 0))
 
-    signal_rsi = "Buy" if rsi < 30 else "Sell" if rsi > 70 else "Hold"
-    signal_ema = "Buy" if ltp > ema else "Sell" if ltp < ema else "Hold"
-    signal_oi = "Buy" if oi > 0 else "Sell" if oi < 0 else "Hold"
+        signal_rsi = "Buy" if rsi < 30 else "Sell" if rsi > 70 else "Hold"
+        signal_ema = "Buy" if ltp > ema else "Sell" if ltp < ema else "Hold"
+        signal_oi = "Buy" if oi > 0 else "Sell" if oi < 0 else "Hold"
 
-    signals = [signal_rsi, signal_ema, signal_oi]
-    if signals.count("Buy") >= 2:
-        final = "Buy"
-    elif signals.count("Sell") >= 2:
-        final = "Sell"
-    else:
-        final = "Hold"
+        signals = [signal_rsi, signal_ema, signal_oi]
+        final = "Buy" if signals.count("Buy") >= 2 else "Sell" if signals.count("Sell") >= 2 else "Hold"
+        final_signals.append(final)
 
-    final_signals.append(final)
-    print(f"{row.get('Symbol')} → Final Signal: {final}")
+        print(f"{row.get('Symbol')} → Final Signal: {final}")
+    except Exception as e:
+        print(f"⚠️ Error in row {i+2}: {e}")
+        final_signals.append("Hold")
 
 # ✅ Update sheet with final signal
 for idx, sig in enumerate(final_signals):
