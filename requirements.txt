@@ -4,7 +4,6 @@ pandas
 openpyxl
 logzero
 SmartAPI
-oauth2client
 gspread
 google-auth
 pandas
