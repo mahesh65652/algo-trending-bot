@@ -3,3 +3,8 @@ google-auth
 pandas
 pyotp
 smartapi-python @ git+https://github.com/angel-one/smartapi-python.git
+pandas
+gspread
+oauth2client
+pyotp
+logzero
