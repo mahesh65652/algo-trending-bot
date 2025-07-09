@@ -1,69 +1,41 @@
-import os
-import time
-import pyotp
-import gspread
-import pandas as pd
-from google.oauth2.service_account import Credentials
-from SmartApi.smartConnect import SmartConnect
 
-# ✅ Google Sheet Auth using google-auth
-scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import time
+
+# Google Sheet credentials and setup
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
 client = gspread.authorize(creds)
 
-# ✅ Open Google Sheet
-sheet_id = os.getenv("SHEET_ID")
-sheet_name = os.getenv("SHEET_NAME", "AutoSignal")
-sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
+# Control sheet URL
+sheet_url = "https://docs.google.com/spreadsheets/d/1kdV2U3PUIN5MVsGVgoEX7up384Vvm2ap/edit#gid=0"
+spreadsheet = client.open_by_url(sheet_url)
+control_sheet = spreadsheet.worksheet("Control")
 
-# ✅ Angel One credentials from GitHub secrets
-api_key = os.getenv("ANGEL_API_KEY")
-api_secret = os.getenv("ANGEL_API_SECRET")
-client_code = os.getenv("CLIENT_CODE")
-totp_key = os.getenv("TOTP")
-totp = pyotp.TOTP(totp_key).now()
+def calculate_signal(rsi, ema, oi, price_action):
+    if rsi < 30 and price_action == "Bullish":
+        return "BUY"
+    elif rsi > 70 and price_action == "Bearish":
+        return "SELL"
+    return "HOLD"
 
-# ✅ Angel One Login
-smart_api = SmartConnect(api_key)
-session = smart_api.generateSession(client_code, totp, api_secret)
-if not session.get("access_token"):
-    print("❌ Login Failed")
-    exit()
+def update_signals():
+    control_data = control_sheet.get_all_records()
+    for row in control_data:
+        symbol = row["Symbol"]
+        target_sheet = spreadsheet.worksheet(symbol)
+        data = target_sheet.get_all_records()
 
-print("✅ Logged in successfully. Starting signal generation...")
+        for i, entry in enumerate(data):
+            rsi = float(entry["RSI"])
+            ema = float(entry["EMA"])
+            oi = float(entry["OI"])
+            price_action = entry["Price Action"]
 
-# ✅ Generate Signals (only if Name == 's')
-final_signals = []
-for i, row in df.iterrows():
-    try:
-        # ✅ Only process rows where Name == 's'
-        if str(row.get("Name", "")).strip().lower() != "s":
-            final_signals.append("Hold")
-            continue
+            final_signal = calculate_signal(rsi, ema, oi, price_action)
+            target_sheet.update_cell(i+2, 7, final_signal)  # Column G = "Final Signal"
+            target_sheet.update_cell(i+2, 8, final_signal)  # Column H = "Action"
 
-        rsi = float(row.get("RSI", 50))
-        ema = float(row.get("EMA", 0))
-        oi = float(row.get("OI", 0))
-        ltp = float(row.get("LTP", 0))
-
-        signal_rsi = "Buy" if rsi < 30 else "Sell" if rsi > 70 else "Hold"
-        signal_ema = "Buy" if ltp > ema else "Sell" if ltp < ema else "Hold"
-        signal_oi = "Buy" if oi > 0 else "Sell" if oi < 0 else "Hold"
-
-        signals = [signal_rsi, signal_ema, signal_oi]
-        final = "Buy" if signals.count("Buy") >= 2 else "Sell" if signals.count("Sell") >= 2 else "Hold"
-        final_signals.append(final)
-
-        print(f"{row.get('Symbol')} → Final Signal: {final}")
-    except Exception as e:
-        print(f"⚠️ Error in row {i+2}: {e}")
-        final_signals.append("Hold")
-
-# ✅ Update sheet with final signal
-for idx, sig in enumerate(final_signals):
-    sheet.update_cell(idx + 2, df.columns.get_loc("Final Signal") + 1, sig)
-    sheet.update_cell(idx + 2, df.columns.get_loc("Action") + 1, sig)
-
-print("✅ All signals updated in Google Sheet.")
+if __name__ == "__main__":
+    update_signals()
