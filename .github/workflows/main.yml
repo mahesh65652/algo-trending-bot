@@ -33,14 +33,16 @@ jobs:
         run: |
           pytest || echo "No tests found, skipping..."
 
-      - name: Create credentials.json from secret
-        run: echo "${{ secrets.GOOGLE_SHEET_CREDS_JSON }}" > credentials.json
+      - name: Create creds.json from secret
+        run: echo "${{ secrets.CREDS_JSON }}" > creds.json
 
       - name: Run Algo Bot (main.py)
         env:
+          CREDS_JSON: ${{ secrets.CREDS_JSON }}
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
           ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
           CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
           TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python main.py
+
