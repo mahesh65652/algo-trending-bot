@@ -3,7 +3,7 @@ name: Run Algo Trading Bot
 on:
   push:
   schedule:
-    - cron: "*/15 * * * *"  # हर 15 मिनट में रन करेगा
+    - cron: "*/15 * * * *"
 
 jobs:
   run-algo:
@@ -24,7 +24,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Create credentials.json
-        run: echo "${{ secrets.CREDS_JSON }}" > creds.json
+        run: echo "${{ secrets.GOOGLE_CREDETIALS_JSON }}" > creds.json
 
       - name: Run main.py
         env:
@@ -33,4 +33,6 @@ jobs:
           CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
           TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: creds.json
         run: python main.py
+
