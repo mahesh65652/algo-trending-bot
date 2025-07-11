@@ -2,22 +2,25 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import datetime
-import random  # Mock data generation, replace with real API
+import random  # Replace with real data fetching in future
 
-# Google Sheet Auth
+print("🚀 Running Algo Trading Bot...")
+
+# Step 1: Google Sheet Authentication
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
-# Open the Sheet
-sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1-YcTqPTP_mffMWScXv-50wdus_WjWKz1/edit")
+# Step 2: Open your target sheet and worksheet
+sheet_url = "https://docs.google.com/spreadsheets/d/1-YcTqPTP_mffMWScXv-50wdus_WjWKz1/edit"
+sheet = client.open_by_url(sheet_url)
 worksheet = sheet.worksheet("NIFTY")
 
-# Read data
+# Step 3: Read the existing data from Sheet
 data = worksheet.get_all_records()
 df = pd.DataFrame(data)
 
-# Mock function to get indicator values (replace with real API logic)
+# Step 4: Function to generate mock indicator values
 def get_indicator_values(symbol):
     rsi = random.randint(10, 90)
     ema = random.randint(19000, 20000)
@@ -25,7 +28,7 @@ def get_indicator_values(symbol):
     price = random.randint(19000, 20000)
     return rsi, ema, oi, price
 
-# Signal logic
+# Step 5: Generate Signal based on logic
 def generate_signal(rsi, ema, price):
     if rsi < 30 and price > ema:
         return "Buy"
@@ -34,18 +37,19 @@ def generate_signal(rsi, ema, price):
     else:
         return "Hold"
 
-# Apply logic and update Sheet
+# Step 6: Loop through rows and update indicators + signal
 for i, row in df.iterrows():
     symbol = row["Symbol"]
     rsi, ema, oi, price = get_indicator_values(symbol)
     signal = generate_signal(rsi, ema, price)
 
-    worksheet.update_cell(i+2, 2, price)       # LTP
-    worksheet.update_cell(i+2, 3, rsi)         # RSI
-    worksheet.update_cell(i+2, 4, ema)         # EMA
-    worksheet.update_cell(i+2, 5, oi)          # OI
-    worksheet.update_cell(i+2, 6, "N/A")       # PriceAction (optional)
-    worksheet.update_cell(i+2, 7, signal)      # FinalSignal
-    worksheet.update_cell(i+2, 8, signal)      # Action
+    # Update the sheet columns accordingly
+    worksheet.update_cell(i + 2, 2, price)      # LTP
+    worksheet.update_cell(i + 2, 3, rsi)        # RSI
+    worksheet.update_cell(i + 2, 4, ema)        # EMA
+    worksheet.update_cell(i + 2, 5, oi)         # OI
+    worksheet.update_cell(i + 2, 6, "N/A")      # Price Action (optional)
+    worksheet.update_cell(i + 2, 7, signal)     # Final Signal
+    worksheet.update_cell(i + 2, 8, signal)     # Action
 
 print("✅ Signals updated in Google Sheet.")
