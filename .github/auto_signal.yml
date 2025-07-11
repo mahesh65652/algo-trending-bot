@@ -1,4 +1,3 @@
-
 name: Auto Signal
 
 on:
@@ -26,11 +25,12 @@ jobs:
           pip install gspread oauth2client
 
       - name: Create creds.json from secret
-        run: echo "${{ secrets.GOOGLE_SHEET_CREDS_JSON }}" > creds.json
+        run: echo "${{ secrets.GOOGLE_CREDETIALS_JSON }}" > creds.json
 
       - name: Run main script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: creds.json
+          GOOGLE_CREDETIALS_JSON: ${{ secrets.GOOGLE_CREDETIALS_JSON }}  # ✅ यही नाम
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
           ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
           CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
