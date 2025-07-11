@@ -8,8 +8,8 @@ import json
 
 print("🚀 Running Algo Trading Bot...")
 
-# Step 1: Read credentials from environment variable (GDRIVE_CREDENTIALS)
-creds_dict = json.loads(os.environ['GDRIVE_CREDENTIALS'])
+# ✅ Step 1: Use the correct secret name from GitHub
+creds_dict = json.loads(os.environ['GOOGLE_CREDETIALS_JSON'])  # ✅ यही नाम पहले चलता था
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
