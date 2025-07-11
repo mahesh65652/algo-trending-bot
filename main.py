@@ -1,3 +1,5 @@
+GOOGLE_SHEET_CREDS_JSON):
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
@@ -8,8 +10,8 @@ import json
 
 print("🚀 Running Algo Trading Bot...")
 
-# ✅ Step 1: Read credentials from correct GitHub secret
-creds_dict = json.loads(os.environ['GOOGLE_SHEET_CREDS_JSON'])  # ✅ fixed line
+# ✅ Step 1: Read credentials from GitHub Secret
+creds_dict = json.loads(os.environ['GOOGLE_SHEET_CREDS_JSON'])
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
@@ -40,7 +42,7 @@ def generate_signal(rsi, ema, price):
     else:
         return "Hold"
 
-# ✅ Step 6: Loop and update sheet
+# ✅ Step 6: Loop and update
 for i, row in df.iterrows():
     symbol = row["Symbol"]
     rsi, ema, oi, price = get_indicator_values(symbol)
