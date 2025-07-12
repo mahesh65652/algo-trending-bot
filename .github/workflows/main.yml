@@ -1,12 +1,11 @@
-# 📛 .github/workflows/run-algo-trading-bot.yml
+# 📛 .github/workflows/main.yml
 
-name: Run Algo Trading Bot
+name: Auto Signal Bot
 
 on:
   schedule:
-    - cron: "*/15 * * * *"  # हर 15 मिनट में ऑटो रन
-  push:
-  workflow_dispatch:
+    - cron: "*/15 * * * *"  # हर 15 मिनट पर ऑटो रन
+  workflow_dispatch:        # मैन्युअल रन की सुविधा
 
 jobs:
   run-algo:
@@ -23,7 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install gspread oauth2client pandas requests
 
@@ -32,10 +31,10 @@ jobs:
 
       - name: Run main.py
         env:
-          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
-          CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
-          TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          SHEET_NAME: ${{ secrets.SHEET_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         run: python main.py
+
