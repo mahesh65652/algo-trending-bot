@@ -22,7 +22,7 @@ def send_telegram_message(message):
         print("⚠️ Telegram token or chat ID not found in environment.")
 
 # ✅ Step 1: Google Sheet Auth
-creds_dict = json.loads(os.environ['GOOGLE_CREDETIALS_JSON'])
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])  # 🔧 Spelling fixed
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
