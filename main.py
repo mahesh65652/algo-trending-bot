@@ -29,12 +29,8 @@ client = gspread.authorize(creds)
 
 # ✅ Open Sheet
 sheet_id = os.environ.get("SHEET_ID")
-sheet_name = os.environ.get("SHEET_NAME", "AutoSignal")
-sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
-
-# ✅ Read Data
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
+spreadsheet = client.open_by_key(sheet_id)
+all_sheets = spreadsheet.worksheets()
 
 # ✅ Indicator logic
 def get_indicator_values(symbol):
@@ -53,23 +49,34 @@ def generate_signal(rsi, ema, price):
     else:
         return "Hold"
 
-# ✅ Loop through each row
-for i, row in df.iterrows():
-    symbol = row.get("Symbol")
-    if not symbol:
-        continue
+# ✅ Loop through all sheets (tabs)
+for sheet in all_sheets:
+    sheet_name = sheet.title
+    print(f"\n📄 Processing Sheet: {sheet_name}")
 
-    rsi, ema, oi, price = get_indicator_values(symbol)
-    signal = generate_signal(rsi, ema, price)
+    try:
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
 
-    sheet.update_cell(i + 2, 2, price)      # LTP
-    sheet.update_cell(i + 2, 3, rsi)        # RSI
-    sheet.update_cell(i + 2, 4, ema)        # EMA
-    sheet.update_cell(i + 2, 5, oi)         # OI
-    sheet.update_cell(i + 2, 6, "N/A")      # Price Action
-    sheet.update_cell(i + 2, 7, signal)     # Final Signal
-    sheet.update_cell(i + 2, 8, signal)     # Action
+        for i, row in df.iterrows():
+            symbol = row.get("Symbol")
+            if not symbol:
+                continue
 
-    send_telegram_message(f"📢 {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}")
+            rsi, ema, oi, price = get_indicator_values(symbol)
+            signal = generate_signal(rsi, ema, price)
 
-print("✅ Sheet updated and alerts sent.")
+            sheet.update_cell(i + 2, 2, price)      # LTP
+            sheet.update_cell(i + 2, 3, rsi)        # RSI
+            sheet.update_cell(i + 2, 4, ema)        # EMA
+            sheet.update_cell(i + 2, 5, oi)         # OI
+            sheet.update_cell(i + 2, 6, "N/A")      # Price Action
+            sheet.update_cell(i + 2, 7, signal)     # Final Signal
+            sheet.update_cell(i + 2, 8, signal)     # Action
+
+            send_telegram_message(f"📢 [{sheet_name}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}")
+
+    except Exception as e:
+        print(f"❌ Error in Sheet {sheet_name}: {e}")
+
+print("\n✅ All Sheets processed successfully.")
