@@ -80,42 +80,4 @@ for sheet in all_sheets:
         print(f"❌ Error in Sheet {sheet_name}: {e}")
 
 
-print("\n✅ All Sheets processed successfully.")
-import gspread
-from datetime import datetime
-
-# ✅ Step 1: Service Account JSON Credentials
-SERVICE_ACCOUNT_FILE = 'credentials.json'  # इस नाम से JSON फाइल सेव करें
-
-# ✅ Step 2: आपकी Google Sheet की ID
-SHEET_ID = '1xJQI1vYxPZKmX2tdsCpkMUaY2Hq08Z1ZhiEHpJEx0Dk'
-SHEET_TAB = 'BankNifty'  # आपकी Sheet का नाम (जैसा कि Sheet में है)
-
-# ✅ Step 3: Google Sheet से कनेक्ट करें
-try:
-    client = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
-    sheet = client.open_by_key(SHEET_ID)
-    worksheet = sheet.worksheet(SHEET_TAB)
-    print(f"✅ Sheet '{SHEET_TAB}' से सफलतापूर्वक कनेक्ट हो गया।")
-except Exception as e:
-    print(f"❌ Sheet को खोलने में Error: {e}")
-    exit()
-
-# ✅ Step 4: Sheet से डेटा पढ़ें
-try:
-    data = worksheet.get_all_values()
-    print(f"📊 कुल पंक्तियाँ: {len(data)}")
-except Exception as e:
-    print(f"❌ डेटा पढ़ने में Error: {e}")
-    exit()
-
-# ✅ Step 5: Sheet में एक मैसेज वापस लिखें
-try:
-    now = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
-    message = f"✅ Accessed at {now}"
-    
-    # Sheet की पहली पंक्ति, Column 10 (J कॉलम) में मैसेज लिखें
-    worksheet.update_cell(1, 10, message)
-    print(f"🟢 Cell अपडेट हुआ: '{message}'")
-except Exception as e:
-    print(f"❌ Sheet में लिखने में Error: {e}")
+print("\n✅ All Sheets processed successfully
