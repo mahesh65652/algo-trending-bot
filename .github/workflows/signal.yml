@@ -1,38 +1,37 @@
 name: Auto Signal
 
 on:
+  workflow_dispatch:  # मैन्युअली GitHub से run कर सकते हैं
   schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch:
+    - cron: "*/15 3-10 * * 1-5"  # हर 15 मिनट पर (सोम-शुक्र, 8:30 AM–3:30 PM IST)
 
 jobs:
   signal:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: ⬇️ Checkout repo
         uses: actions/checkout@v3
 
-      - name: Set up Python
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install gspread oauth2client
+          pip install gspread oauth2client pandas requests
 
-      - name: Create creds.json from secret
+      - name: 🛂 Create creds.json from secret
         run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
 
-      - name: Run main script
+      - name: 🚀 Run Algo Bot
+        run: python main.py
         env:
           GOOGLE_APPLICATION_CREDENTIALS: creds.json
-          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-          ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
-          CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
-          TOTP: ${{ secrets.TOTP }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
-        run: python main.py
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
