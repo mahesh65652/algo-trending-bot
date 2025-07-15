@@ -78,6 +78,4 @@ for sheet in all_sheets:
 
     except Exception as e:
         print(f"❌ Error in Sheet {sheet_name}: {e}")
-
-
-print("\n✅ All Sheets processed successfully
+        
