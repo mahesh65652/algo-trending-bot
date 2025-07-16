@@ -113,14 +113,19 @@ sheet_id = os.environ.get("SHEET_ID")
 spreadsheet = client.open_by_key(sheet_id)
 all_sheets = spreadsheet.worksheets()
 
-# ✅ Indicator logic (now with VWAP)
+# ✅ Indicator logic
 def get_indicator_values(symbol):
     rsi = random.randint(10, 90)
     ema = random.randint(19000, 20000)
     oi = random.randint(100000, 500000)
     price = random.randint(19000, 20000)
-    vwap = (price + ema + (oi % 1000)) / 3  # Dummy VWAP logic
-    return rsi, ema, oi, price, round(vwap, 2)
+    
+    # VWAP Calculation with mock volume and price
+    prices = [price + random.randint(-100, 100) for _ in range(5)]
+    volumes = [random.randint(100, 500) for _ in range(5)]
+    vwap = round(sum(p * v for p, v in zip(prices, volumes)) / sum(volumes), 2)
+    
+    return rsi, ema, oi, price, vwap
 
 # ✅ Signal logic
 def generate_signal(rsi, ema, price):
@@ -157,8 +162,7 @@ for sheet in all_sheets:
             sheet.update_cell(i + 2, 8, signal)     # Action
             sheet.update_cell(i + 2, 9, vwap)       # VWAP
 
-            send_telegram_message(f"📢 [{sheet_name}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, VWAP: {vwap}, OI: {oi}")
+            send_telegram_message(f"📢 [{sheet_name}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}, VWAP: {vwap}")
 
     except Exception as e:
         print(f"❌ Error in Sheet {sheet_name}: {e}")
-
