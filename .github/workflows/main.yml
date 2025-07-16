@@ -29,3 +29,38 @@ jobs:
         SHEET_ID: ${{ secrets.SHEET_ID }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+name: Run Algo Trading Bot
+
+on:
+  workflow_dispatch:  # मैन्युअली GitHub से रन करने के लिए
+  schedule:
+    - cron: '*/30 3-10 * * 1-5'  # हर 30 मिनट सुबह 8:30 से 3:30 तक (IST), सोमवार से शुक्रवार
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: ⬇️ Checkout repo
+      uses: actions/checkout@v3
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: 📦 Install dependencies
+      run: |
+        pip install gspread oauth2client pandas requests
+
+    - name: 🛂 Create creds.json from secret
+      run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
+
+    - name: 🚀 Run Algo Bot
+      run: python main.py
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: creds.json
+        SHEET_ID: ${{ secrets.SHEET_ID }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
