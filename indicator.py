@@ -1,82 +1,84 @@
+import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
-import ta
+from datetime import datetime, timedelta
 from smartapi import SmartConnect
-import datetime
+import ta
+import time
+import os
 
-# === CONFIGURATION ===
-sheet_id = "1kdV2U3PUIN5MVsGVgoEX7up384Vvm2ap"  # Google Sheet ID
-sheet_names = ["CRUDEOIL", "NG"]
-api_key = "YOUR_API_KEY"
-client_id = "YOUR_CLIENT_ID"
-client_secret = "YOUR_CLIENT_SECRET"
-refresh_token = "YOUR_REFRESH_TOKEN"
-feed_token = "YOUR_FEED_TOKEN"  # Optional for live feed
-access_token = "YOUR_ACCESS_TOKEN"
+# --- Load credentials from environment ---
+API_KEY = os.getenv("ANGEL_API_KEY")
+API_SECRET = os.getenv("ANGEL_API_SECRET")
+CLIENT_CODE = os.getenv("CLIENT_CODE")
+TOTP = os.getenv("TOTP")
+SHEET_ID = os.getenv("SHEET_ID_CRUDEOIL")
 
-# === GOOGLE SHEET SETUP ===
+# --- Authenticate Google Sheets ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("your_json_key.json", scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
+sheet = client.open_by_key(SHEET_ID).sheet1
 
-# === ANGEL ONE SETUP ===
-obj = SmartConnect(api_key=api_key)
-obj.generateSession(client_id, refresh_token)
-# fetch_token = obj.getfeedToken()
+# --- Authenticate Angel One ---
+smart = SmartConnect(api_key=API_KEY)
+data = smart.generateSession(client_code=CLIENT_CODE, password=API_SECRET, totp=TOTP)
+feed_token = smart.getfeedToken()
 
-def fetch_ohlc(symbol_token, exchange, interval="FifteenMin", days=20):
-    now = datetime.datetime.now()
-    from_dt = now - datetime.timedelta(days=days)
-    to_dt = now
+# --- Read symbols ---
+symbols = ["CRUDEOIL", "NATURALGAS"]
+exchange = "MCX"
+
+# --- Timeframe ---
+interval = "FifteenMinute"
+lookback_minutes = 100
+
+def fetch_data(symbol):
+    end_time = datetime.now()
+    start_time = end_time - timedelta(minutes=lookback_minutes)
+
     params = {
         "exchange": exchange,
-        "symboltoken": symbol_token,
+        "symboltoken": smart.ltpData(exchange, symbol)["data"]["instrumenttoken"],
         "interval": interval,
-        "fromdate": from_dt.strftime("%Y-%m-%d %H:%M"),
-        "todate": to_dt.strftime("%Y-%m-%d %H:%M")
+        "fromdate": start_time.strftime("%Y-%m-%d %H:%M"),
+        "todate": end_time.strftime("%Y-%m-%d %H:%M")
     }
-    response = obj.getCandleData(params)
-    data = pd.DataFrame(response["data"], columns=["datetime", "open", "high", "low", "close", "volume"])
-    return data
 
-def calculate_indicators(df):
-    df["RSI"] = ta.momentum.RSIIndicator(close=df["close"], window=14).rsi()
-    df["EMA"] = ta.trend.EMAIndicator(close=df["close"], window=20).ema_indicator()
+    historical = smart.getCandleData(params)
+    df = pd.DataFrame(historical["data"], columns=["datetime", "open", "high", "low", "close", "volume"])
+    df["datetime"] = pd.to_datetime(df["datetime"])
     return df
 
-def generate_signal(row):
-    if row["RSI"] < 30 and row["close"] > row["EMA"]:
+def calculate_indicators(df):
+    df["EMA"] = ta.trend.ema_indicator(df["close"], window=20)
+    df["RSI"] = ta.momentum.RSIIndicator(df["close"], window=14).rsi()
+    df["VWAP"] = ta.volume.volume_weighted_average_price(df["high"], df["low"], df["close"], df["volume"])
+    return df
+
+def generate_signal(df):
+    latest = df.iloc[-1]
+    if latest["close"] > latest["VWAP"] and latest["RSI"] > 50 and latest["close"] > latest["EMA"]:
         return "BUY"
-    elif row["RSI"] > 70 and row["close"] < row["EMA"]:
+    elif latest["close"] < latest["VWAP"] and latest["RSI"] < 50 and latest["close"] < latest["EMA"]:
         return "SELL"
     else:
         return "HOLD"
 
-def updateSheet(symbol, token, exchange):
-    sheet = client.open_by_key(sheet_id).worksheet(symbol)
-    df = fetch_ohlc(token, exchange)
-    df = calculate_indicators(df)
-    latest = df.iloc[-1]
-    signal = generate_signal(latest)
+def update_sheet():
+    for i, symbol in enumerate(symbols, start=2):
+        try:
+            df = fetch_data(symbol)
+            df = calculate_indicators(df)
+            signal = generate_signal(df)
+            last = df.iloc[-1]
+            sheet.update(f"A{i}", symbol)
+            sheet.update(f"B{i}", round(last["close"], 2))
+            sheet.update(f"C{i}", round(last["RSI"], 2))
+            sheet.update(f"D{i}", round(last["EMA"], 2))
+            sheet.update(f"E{i}", round(last["VWAP"], 2))
+            sheet.update(f"F{i}", signal)
+        except Exception as e:
+            print(f"Error with {symbol}: {e}")
 
-    values = [
-        symbol,
-        latest["close"],
-        round(latest["RSI"], 2),
-        round(latest["EMA"], 2),
-        "Manual OI",     # Optional: Fill OI manually
-        "Price Logic",   # Placeholder for price action logic
-        signal,
-        signal
-    ]
-    sheet.append_row(values, value_input_option="USER_ENTERED")
-
-# CRUDEOIL & NG tokens (update if needed)
-symbol_map = {
-    "CRUDEOIL": {"token": "236", "exchange": "MCX"},
-    "NG": {"token": "229", "exchange": "MCX"}
-}
-
-for symbol, info in symbol_map.items():
-    updateSheet(symbol, info["token"], info["exchange"])
+update_sheet()
