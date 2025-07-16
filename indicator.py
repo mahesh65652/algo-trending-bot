@@ -82,3 +82,55 @@ def update_sheet():
             print(f"Error with {symbol}: {e}")
 
 update_sheet()
+import pandas as pd
+import numpy as np
+
+def calculate_indicators(df):
+    df = df.copy()
+
+    # Convert to datetime if not already
+    df['time'] = pd.to_datetime(df['time'])
+
+    # Sort data by time
+    df = df.sort_values('time')
+
+    # Calculate RSI
+    delta = df['close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+
+    rs = avg_gain / avg_loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+
+    # Calculate EMA (21)
+    df['EMA'] = df['close'].ewm(span=21, adjust=False).mean()
+
+    # Calculate VWAP
+    df['TP'] = (df['high'] + df['low'] + df['close']) / 3
+    df['vwap_numerator'] = df['TP'] * df['volume']
+    df['vwap_denominator'] = df['volume']
+    df['VWAP'] = df['vwap_numerator'].cumsum() / df['vwap_denominator'].cumsum()
+
+    # Final Signal logic
+    def get_signal(row):
+        if (
+            row['RSI'] > 60 and
+            row['close'] > row['EMA'] and
+            row['close'] > row['VWAP']
+        ):
+            return 'BUY'
+        elif (
+            row['RSI'] < 40 and
+            row['close'] < row['EMA'] and
+            row['close'] < row['VWAP']
+        ):
+            return 'SELL'
+        else:
+            return 'HOLD'
+
+    df['Signal'] = df.apply(get_signal, axis=1)
+
+    return df[['time', 'close', 'RSI', 'EMA', 'VWAP', 'Signal']]
