@@ -29,3 +29,40 @@ jobs:
       run: |
         pip install pytest
         pytest || echo "No tests found, skipping..."
+
+.github/workflows/run.yml
+
+name: Generate Angel Tokens
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'  # हर दिन सुबह 9:30 बजे IST (4:00 UTC)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install SmartApi pyotp
+
+      - name: Generate Token
+        run: python generate_token.py
+
+      - name: Convert JSON to CSV
+        run: python convert_json_to_csv.py
+
+      - name: Upload CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokens-csv
+          path: token_output.csv
+
