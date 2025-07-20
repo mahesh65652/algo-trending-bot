@@ -77,3 +77,54 @@ def main():
 
 if __name__ == "__main__":
     main()
+import os, json, gspread, time
+from SmartApi.smartConnect import SmartConnect
+from oauth2client.service_account import ServiceAccountCredentials
+
+# Angel One Auth
+client = SmartConnect(api_key=os.environ['API_KEY'])
+access_token = os.environ['ACCESS_TOKEN']
+client.set_access_token(access_token)
+
+# Google Sheet Auth
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client_gs = gspread.authorize(creds)
+
+# Open Sheet
+sheet_id = os.environ['SHEET_ID']
+sheet = client_gs.open_by_key(sheet_id).sheet1  # Main sheet
+rows = sheet.get_all_values()[1:]  # skip header
+
+# Loop & Place Orders
+for i, row in enumerate(rows):
+    symbol = row[0].strip()
+    signal = row[7].strip()  # H = Action
+    ltp = float(row[1]) if row[1] else 0  # B = LTP
+
+    if signal not in ["Buy", "Sell"]:
+        continue
+
+    try:
+        order_params = {
+            "variety": "NORMAL",
+            "tradingsymbol": symbol,
+            "symboltoken": "26000",  # Placeholder, आपको सही token चाहिए
+            "transactiontype": signal.upper(),
+            "exchange": "MCX",
+            "ordertype": "MARKET",
+            "producttype": "INTRADAY",
+            "duration": "DAY",
+            "price": 0,
+            "quantity": 1
+        }
+
+        order_id = client.placeOrder(order_params)
+        print(f"✅ Order Placed: {symbol} {signal} → {order_id}")
+        sheet.update_cell(i+2, 10, "✔️")  # J = Status
+
+    except Exception as e:
+        print(f"❌ Order Failed for {symbol}: {e}")
+        sheet.update_cell(i+2, 10, "❌")  # J = Status
+
