@@ -207,3 +207,95 @@ for sheet in sheets:
         except Exception as e:
             print(f"❌ Error on {symbol}: {e}")
 
+import gspread
+import pandas as pd
+import talib
+from oauth2client.service_account import ServiceAccountCredentials
+from smartapi import SmartConnect
+
+# ✅ Angel One credentials (Environment से)
+client_id = os.environ.get("ANGEL_CLIENT_ID")
+api_key = os.environ.get("ANGEL_API_KEY")
+access_token = os.environ.get("ANGEL_ACCESS_TOKEN")
+
+# ✅ Connect to Angel One
+obj = SmartConnect(api_key=api_key)
+obj.generateSession(client_id, access_token)
+feed_token = obj.getfeedToken()
+
+# ✅ Google Sheet Auth
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+
+# ✅ Sheet & Index Tokens
+sheet = client.open_by_key(os.environ.get("SHEET_ID")).sheet1
+symbol_token_map = {
+    "NIFTY": "99926009",
+    "BANKNIFTY": "99926011",
+    "FINNIFTY": "99926037",
+    "MIDCPNIFTY": "99926012"
+}
+
+# ✅ Signal Logic
+def generate_signal(rsi, price, ema):
+    if rsi < 30 and price > ema:
+        return "Buy"
+    elif rsi > 70 and price < ema:
+        return "Sell"
+    else:
+        return "Hold"
+
+# ✅ Fetch Live Price (LTP)
+def get_ltp(exchange, symbol_token):
+    try:
+        data = {
+            "exchange": exchange,
+            "tradingsymbol": symbol_token,
+            "symboltoken": symbol_token
+        }
+        res = obj.ltpData(**data)
+        return float(res['data']['ltp'])
+    except Exception as e:
+        print("LTP Error:", e)
+        return None
+
+# ✅ Main Process
+def process_sheet():
+    data = sheet.get_all_values()
+    rows = data[1:]  # skipping header
+
+    for i, row in enumerate(rows):
+        symbol = row[0].strip()
+        token = symbol_token_map.get(symbol)
+
+        if not token:
+            continue
+
+        ltp = get_ltp("NSE", token)
+        if not ltp:
+            continue
+
+        # Simulate historical data for indicators
+        prices = [ltp + i for i in range(-14, 1)]
+        series = pd.Series(prices)
+
+        rsi = round(talib.RSI(series, timeperiod=14)[-1], 2)
+        ema = round(talib.EMA(series, timeperiod=14)[-1], 2)
+        oi = 0  # OI for index is mostly N/A, you can leave blank or simulate
+        signal = generate_signal(rsi, ltp, ema)
+
+        # ✅ Update sheet
+        sheet.update_cell(i+2, 2, ltp)      # B = LTP
+        sheet.update_cell(i+2, 3, rsi)      # C = RSI
+        sheet.update_cell(i+2, 4, ema)      # D = EMA
+        sheet.update_cell(i+2, 5, oi)       # E = OI
+        sheet.update_cell(i+2, 6, "N/A")    # F = Price Action
+        sheet.update_cell(i+2, 7, signal)   # G = Final Signal
+        sheet.update_cell(i+2, 8, signal)   # H = Action
+
+        print(f"✅ {symbol} | LTP: {ltp} | RSI: {rsi} | EMA: {ema} | Signal: {signal}")
+
+# ✅ Run it
+process_sheet()
