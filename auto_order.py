@@ -128,3 +128,95 @@ for i, row in enumerate(rows):
         print(f"❌ Order Failed for {symbol}: {e}")
         sheet.update_cell(i+2, 10, "❌")  # J = Status
 
+import os, json, time
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from smartapi import SmartConnect
+import requests
+
+# ✅ Telegram Alert (Optional)
+def send_telegram(message):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": message})
+
+# ✅ Token Mapping (MCX + NSE)
+token_map = {
+    "CRUDEOIL": {"token": "21906", "exchange": "MCX"},
+    "NATURALGAS": {"token": "21921", "exchange": "MCX"},
+    "SILVER": {"token": "22032", "exchange": "MCX"},
+    "GOLD": {"token": "21837", "exchange": "MCX"},
+    "NIFTY": {"token": "3045", "exchange": "NSE"},
+    "BANKNIFTY": {"token": "26009", "exchange": "NSE"},
+    "RELIANCE": {"token": "2885", "exchange": "NSE"},
+    "TCS": {"token": "11536", "exchange": "NSE"}
+    # Add more symbols here
+}
+
+# ✅ Angel One Login
+client_id = os.environ['CLIENT_ID']
+api_key = os.environ['API_KEY']
+refresh_token = os.environ['FEED_TOKEN']
+
+obj = SmartConnect(api_key=api_key)
+session = obj.generateSession(client_id, refresh_token)
+auth_token = session['data']['jwtToken']
+
+# ✅ Google Sheet Auth
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+
+sheet_id = os.environ['SHEET_ID']
+spreadsheet = client.open_by_key(sheet_id)
+sheets = spreadsheet.worksheets()
+
+# ✅ Order Function
+def place_order(symbol, action):
+    if symbol not in token_map:
+        print(f"❌ Symbol Not Found: {symbol}")
+        return "❌ Symbol Not Found"
+
+    token_info = token_map[symbol]
+    orderparams = {
+        "variety": "NORMAL",
+        "tradingsymbol": symbol,
+        "symboltoken": token_info["token"],
+        "transactiontype": action.upper(),
+        "exchange": token_info["exchange"],
+        "ordertype": "MARKET",
+        "producttype": "INTRADAY",
+        "duration": "DAY",
+        "price": 0,
+        "quantity": 1
+    }
+
+    try:
+        orderId = obj.placeOrder(orderparams)
+        print(f"✅ Order Placed: {symbol} → {action} → ID: {orderId}")
+        return f"✅ Order ID: {orderId}"
+    except Exception as e:
+        print(f"❌ Order Failed: {symbol} → {action} → {e}")
+        return f"❌ {e}"
+
+# ✅ Process All Sheets
+for sheet in sheets:
+    print(f"\n📄 Sheet: {sheet.title}")
+    data = sheet.get_all_values()
+    rows = data[1:]
+
+    for i, row in enumerate(rows):
+        symbol = row[0].strip().upper()
+        action = row[7].strip().capitalize()  # Column H
+        status = row[8].strip() if len(row) > 8 else ""
+
+        if action in ["Buy", "Sell"] and status != "Order Placed":
+            result = place_order(symbol, action)
+            sheet.update_cell(i + 2, 9, "Order Placed")  # Column I
+            send_telegram(f"📢 {symbol} → {action} → {result}")
+            time.sleep(1)
+
+print("✅ All Orders Processed.")
