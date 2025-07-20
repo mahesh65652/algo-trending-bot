@@ -299,3 +299,86 @@ def process_sheet():
 
 # ✅ Run it
 process_sheet()
+import os, json, time
+import gspread
+import pandas as pd
+from smartapi.smartConnect import SmartConnect
+from oauth2client.service_account import ServiceAccountCredentials
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator
+
+# ✅ Angel One credentials
+API_KEY = os.getenv("API_KEY")
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+
+# ✅ Google Sheet setup
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_key(os.getenv("SHEET_ID")).sheet1
+
+# ✅ Angel One Connect
+obj = SmartConnect(api_key=API_KEY)
+obj.generateSession(CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN)
+
+# ✅ Get token using symbol
+def get_token(symbol):
+    instrument = obj.searchInstrument("NSE", symbol)
+    if instrument:
+        return instrument[0]['token']
+    return None
+
+# ✅ Get 15-min candle and calculate RSI/EMA
+def get_indicators(symbol):
+    token = get_token(symbol)
+    if not token:
+        return None
+
+    params = {
+        "exchange": "NSE",
+        "symboltoken": token,
+        "interval": "FifteenMinute",
+        "fromdate": "2025-07-18 09:15",
+        "todate": "2025-07-19 15:30"
+    }
+    data = obj.getCandleData(params)
+    df = pd.DataFrame(data['data'], columns=["datetime", "open", "high", "low", "close", "volume"])
+    df["close"] = pd.to_numeric(df["close"])
+
+    rsi = RSIIndicator(df["close"], window=14).rsi().iloc[-1]
+    ema = EMAIndicator(df["close"], window=20).ema_indicator().iloc[-1]
+    ltp = df["close"].iloc[-1]
+
+    return round(rsi, 2), round(ema, 2), round(ltp, 2)
+
+# ✅ Generate Signal
+def get_signal(rsi, ema, price):
+    if rsi < 30 and price > ema:
+        return "Buy"
+    elif rsi > 70 and price < ema:
+        return "Sell"
+    return "Hold"
+
+# ✅ Process sheet rows
+rows = sheet.get_all_values()[1:]
+for i, row in enumerate(rows):
+    symbol = row[0].strip()
+    if not symbol:
+        continue
+    try:
+        rsi, ema, price = get_indicators(symbol)
+        signal = get_signal(rsi, ema, price)
+
+        sheet.update_cell(i+2, 2, price)  # B = LTP
+        sheet.update_cell(i+2, 3, rsi)    # C = RSI
+        sheet.update_cell(i+2, 4, ema)    # D = EMA
+        sheet.update_cell(i+2, 7, signal) # G = Final Signal
+        sheet.update_cell(i+2, 8, signal) # H = Action
+
+        print(f"✅ {symbol}: {signal} @ {price} | RSI: {rsi} | EMA: {ema}")
+
+    except Exception as e:
+        print(f"❌ Error processing {symbol}: {e}")
