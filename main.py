@@ -33,10 +33,7 @@ def get_indicator_values(symbol):
     rsi = random.randint(10, 90)
     ema = random.randint(19000, 20000)
     oi = random.randint(100000, 500000)
-    prices = [price + random.randint(-100, 100) for _ in range(5)]
-    volumes = [random.randint(100, 500) for _ in range(5)]
-    vwap = round(sum(p * v for p, v in zip(prices, volumes)) / sum(volumes), 2)
-    return rsi, ema, oi, price, vwap
+    return rsi, ema, oi, price
 
 # ✅ Signal logic
 def generate_signal(rsi, ema, price):
@@ -58,7 +55,7 @@ for sheet in all_sheets:
             symbol = row[0].strip()
             if not symbol: continue
 
-            rsi, ema, oi, price, vwap = get_indicator_values(symbol)
+            rsi, ema, oi, price = get_indicator_values(symbol)
             signal = generate_signal(rsi, ema, price)
 
             sheet.update_cell(i+2, 2, price)      # B = LTP
@@ -68,10 +65,9 @@ for sheet in all_sheets:
             sheet.update_cell(i+2, 6, "N/A")      # F = Price Action
             sheet.update_cell(i+2, 7, signal)     # G = Final Signal
             sheet.update_cell(i+2, 8, signal)     # H = Action
-            sheet.update_cell(i+2, 9, vwap)       # I = VWAP
 
             print(f"✅ {symbol} → {signal} @ {price}")
-            send_telegram_message(f"[{sheet.title}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}, VWAP: {vwap}")
+            send_telegram_message(f"[{sheet.title}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}")
 
     except Exception as e:
         print(f"❌ Error: {e}")
