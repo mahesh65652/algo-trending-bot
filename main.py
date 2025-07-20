@@ -72,3 +72,138 @@ for sheet in all_sheets:
     except Exception as e:
         print(f"❌ Error: {e}")
 
+import os, json, requests, datetime
+import gspread
+import numpy as np
+import pandas as pd
+from oauth2client.service_account import ServiceAccountCredentials
+
+from smartapi import SmartConnect  # pip install smartapi-python
+
+print("🚀 Running LIVE Algo Trading Bot...")
+
+# ✅ Telegram Alert
+def send_telegram(message):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = {"chat_id": chat_id, "text": message}
+        try:
+            requests.post(url, data=data)
+        except:
+            pass
+
+# ✅ Google Sheet Auth
+creds_json = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, scope)
+client = gspread.authorize(creds)
+
+# ✅ Angel One API Auth
+client_id     = os.environ.get("CLIENT_ID")
+client_secret = os.environ.get("CLIENT_SECRET")
+feed_token    = os.environ.get("FEED_TOKEN")
+access_token  = os.environ.get("ACCESS_TOKEN")
+
+obj = SmartConnect(api_key=client_id)
+obj.feed_token = feed_token
+obj.set_session(client_id, access_token)
+
+def get_ltp(symbol):
+    try:
+        params = {
+            "exchange": "MCX",
+            "tradingsymbol": symbol,
+            "symboltoken": "53968" if symbol == "CRUDEOIL" else "0",  # Update symboltoken per symbol
+        }
+        data = obj.ltpData(**params)
+        return float(data['data']['ltp'])
+    except Exception as e:
+        print(f"LTP Error {symbol}: {e}")
+        return 0.0
+
+def get_ohlc(symbol, interval='FifteenMinute', days=1):
+    try:
+        to_date = datetime.datetime.now()
+        from_date = to_date - datetime.timedelta(days=days)
+        data = obj.getCandleData({
+            "exchange": "MCX",
+            "symboltoken": "53968",  # CRUDEOIL Token (update per symbol)
+            "interval": interval,
+            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+            "todate": to_date.strftime("%Y-%m-%d %H:%M")
+        })
+        candles = data['data']
+        df = pd.DataFrame(candles, columns=["time", "open", "high", "low", "close", "volume"])
+        return df
+    except Exception as e:
+        print(f"OHLC Error {symbol}: {e}")
+        return pd.DataFrame()
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return round(rsi.iloc[-1], 2)
+
+def calculate_ema(series, period=14):
+    ema = series.ewm(span=period, adjust=False).mean()
+    return round(ema.iloc[-1], 2)
+
+def generate_signal(rsi, ema, price):
+    if rsi < 30 and price > ema:
+        return "Buy"
+    elif rsi > 70 and price < ema:
+        return "Sell"
+    else:
+        return "Hold"
+
+# ✅ Open Google Sheet
+sheet_id = os.environ.get("SHEET_ID")
+spreadsheet = client.open_by_key(sheet_id)
+sheets = spreadsheet.worksheets()
+
+for sheet in sheets:
+    print(f"\n📄 Sheet: {sheet.title}")
+    data = sheet.get_all_values()
+    rows = data[1:]  # Skip headers
+
+    for i, row in enumerate(rows):
+        try:
+            symbol = row[0].strip()
+            if not symbol:
+                continue
+
+            # ✅ LTP + OHLC
+            ltp = get_ltp(symbol)
+            df = get_ohlc(symbol)
+
+            if df.empty:
+                print(f"⚠️ No candle data for {symbol}")
+                continue
+
+            rsi = calculate_rsi(df["close"])
+            ema = calculate_ema(df["close"])
+            oi = random.randint(100000, 500000)  # 🔁 OI dummy, update if source available
+            signal = generate_signal(rsi, ema, ltp)
+
+            # ✅ Update Sheet
+            sheet.update_cell(i+2, 2, ltp)      # LTP
+            sheet.update_cell(i+2, 3, rsi)      # RSI
+            sheet.update_cell(i+2, 4, ema)      # EMA
+            sheet.update_cell(i+2, 5, oi)       # OI
+            sheet.update_cell(i+2, 6, "N/A")    # Price Action
+            sheet.update_cell(i+2, 7, signal)   # Final Signal
+            sheet.update_cell(i+2, 8, signal)   # Action
+
+            print(f"✅ {symbol}: {signal} @ {ltp}")
+            send_telegram(f"[{sheet.title}] {symbol}: {signal} @ {ltp} | RSI: {rsi}, EMA: {ema}, OI: {oi}")
+
+        except Exception as e:
+            print(f"❌ Error on {symbol}: {e}")
+
