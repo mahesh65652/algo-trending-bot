@@ -249,3 +249,87 @@ for tab in TABS:
     time.sleep(1)
 
 print("✅ All tabs processed.")
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from smartapi import SmartConnect
+import time
+
+# === CONFIGURATION ===
+sheet_names = ['BANKNIFTY', 'NIFTY50', 'FINNIFTY', 'CRUDEOIL', 'GOLD', 'SILVER', 'NG']
+quantity = 1
+
+# === GOOGLE SHEET SETUP ===
+scope = ["https://spreadsheets.google.com/feeds",
+         'https://www.googleapis.com/auth/spreadsheets',
+         "https://www.googleapis.com/auth/drive.file",
+         "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
+
+# 🔁 YOUR GOOGLE SHEET URL HERE
+spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1zNq9Hq9QaNwE7my9xGkq28hI9UNuYai4YV3P9hUzWxQ/edit")
+
+# === ANGEL ONE API SETUP ===
+api_key = "xxxxxxxxxxx"
+client_id = "xxxxxxxxxxx"
+pin = "xxxx"
+totp = "xxxxxx"
+
+smartApi = SmartConnect(api_key=api_key)
+login_data = smartApi.generateSession(client_id, pin, totp)
+
+# 🔄 GET SYMBOLTOKEN FROM ANGEL API OR STATIC MAPPING
+symbol_tokens = {
+    "BANKNIFTY": "99926009",
+    "NIFTY50": "99926000",
+    "FINNIFTY": "99926004",
+    "CRUDEOIL": "26009",
+    "GOLD": "26018",
+    "SILVER": "26019",
+    "NG": "26003"
+}
+
+def place_order(symbol, action, price, token):
+    try:
+        orderparams = {
+            "variety": "NORMAL",
+            "tradingsymbol": symbol,
+            "symboltoken": token,
+            "transactiontype": action.upper(),
+            "exchange": "NSE" if symbol in ['BANKNIFTY', 'NIFTY50', 'FINNIFTY'] else "MCX",
+            "ordertype": "MARKET",
+            "producttype": "INTRADAY",
+            "duration": "DAY",
+            "price": "0",
+            "quantity": quantity
+        }
+        response = smartApi.placeOrder(orderparams)
+        print("✅ Order Placed:", response)
+        return "✅ Done"
+    except Exception as e:
+        print("❌ Error placing order:", e)
+        return "❌ Error"
+
+# === LOOP THROUGH EACH SHEET TAB ===
+for sheet_name in sheet_names:
+    try:
+        sheet = spreadsheet.worksheet(sheet_name)
+        records = sheet.get_all_records()
+
+        for i, row in enumerate(records, start=2):
+            symbol = row.get("Symbol")
+            action = row.get("Action", "").strip().lower()
+            ltp = row.get("LTP", 0)
+
+            if symbol and action in ["buy", "sell"]:
+                token = symbol_tokens.get(sheet_name, "")
+                if not token:
+                    print(f"⚠️ No token found for {symbol}")
+                    continue
+                print(f"📢 {action.upper()} => {symbol} @ {ltp}")
+                result = place_order(symbol, action, ltp, token)
+                sheet.update_cell(i, 14, result)
+
+    except Exception as e:
+        print(f"⚠️ Error in sheet '{sheet_name}':", e)
+
