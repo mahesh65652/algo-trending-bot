@@ -382,3 +382,73 @@ for i, row in enumerate(rows):
 
     except Exception as e:
         print(f"❌ Error processing {symbol}: {e}")
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from smartapi import SmartConnect
+import time
+
+# === Angel One SmartAPI credentials ===
+API_KEY = "YOUR_API_KEY"
+CLIENT_ID = "YOUR_CLIENT_ID"
+CLIENT_SECRET = "YOUR_CLIENT_SECRET"
+JWT_TOKEN = "YOUR_JWT_TOKEN"
+FEED_TOKEN = "YOUR_FEED_TOKEN"
+
+obj = SmartConnect(api_key=API_KEY)
+obj.generateSession(CLIENT_ID, CLIENT_SECRET, JWT_TOKEN)
+obj.feedToken = FEED_TOKEN
+
+# === Google Sheets credentials ===
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+client = gspread.authorize(creds)
+
+# === Tab (Sheet) Names ===
+sheet_tabs = ["BANKNIFTY", "NIFTY50", "FINNIFTY", "CRUDEOIL", "SILVER", "GOLD", "NG"]
+
+# === Symbol to Token Mapping (must be correct) ===
+symbol_token_map = {
+    "BANKNIFTY": "99926009",
+    "NIFTY50": "99926000",
+    "FINNIFTY": "99926006",
+    "CRUDEOIL": "26000",
+    "SILVER": "26009",
+    "GOLD": "26018",
+    "NG": "26003"
+}
+
+# === Exchange map ===
+exchange_map = {
+    "BANKNIFTY": "NSE",
+    "NIFTY50": "NSE",
+    "FINNIFTY": "NSE",
+    "CRUDEOIL": "MCX",
+    "SILVER": "MCX",
+    "GOLD": "MCX",
+    "NG": "MCX"
+}
+
+# === Process each sheet/tab ===
+for tab_name in sheet_tabs:
+    print(f"\n📄 Updating Sheet: {tab_name}")
+    sheet = client.open("AlgoTradingSheet").worksheet(tab_name)
+    symbols = sheet.col_values(1)[1:]  # skip header
+
+    for i, symbol in enumerate(symbols):
+        try:
+            exchange = exchange_map[tab_name]
+            token = symbol_token_map.get(symbol, symbol_token_map.get(tab_name))
+
+            params = {
+                "exchange": exchange,
+                "tradingsymbol": symbol,
+                "symboltoken": token
+            }
+            ltp_data = obj.ltpData(**params)
+            ltp = ltp_data["data"]["ltp"]
+            sheet.update_cell(i + 2, 2, ltp)
+            print(f"{symbol} LTP: ₹{ltp}")
+            time.sleep(1)
+        except Exception as e:
+            print(f"❌ Error in {tab_name} for {symbol}: {e}")
+
