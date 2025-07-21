@@ -153,3 +153,99 @@ for tab in tabs:
 
 print("🎯 FINAL RUN COMPLETE")
 
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from smartapi import SmartConnect
+import time
+
+# ====== CONFIGURATION ======
+GOOGLE_SHEET_NAME = "Your Sheet Name Here"
+TABS = ["BANKNIFTY", "NIFTY50", "FINNIFTY", "CRUDOIL", "SILVER", "GOLD", "NG"]
+ROW_INDEX = 2  # A2 row
+EMAIL_COLUMN = "A"
+
+# Angel One Credentials
+api_key = "YOUR_API_KEY"
+client_id = "YOUR_CLIENT_ID"
+pwd = "YOUR_PASSWORD"
+totp = "YOUR_TOTP"
+
+# ====== AUTHENTICATION ======
+
+# Authenticate Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
+sheet = client.open(GOOGLE_SHEET_NAME)
+
+# Authenticate Angel One API
+obj = SmartConnect(api_key)
+data = obj.generateSession(client_id, pwd, totp)
+auth_token = data['data']['jwtToken']
+refresh_token = data['data']['refreshToken']
+feed_token = obj.getfeedToken()
+
+# ====== LOGIC ======
+
+def place_order(symbol, action):
+    try:
+        orderparams = {
+            "variety": "NORMAL",
+            "tradingsymbol": symbol,
+            "symboltoken": "XYZTOKEN",  # You need to fetch real token for this symbol
+            "transactiontype": action,
+            "exchange": "NSE",
+            "ordertype": "MARKET",
+            "producttype": "INTRADAY",
+            "duration": "DAY",
+            "price": "0",
+            "squareoff": "0",
+            "stoploss": "0",
+            "quantity": 1
+        }
+        orderId = obj.placeOrder(orderparams)
+        print(f"Order placed: {symbol} - {action} - Order ID: {orderId}")
+        return f"Order ID: {orderId}"
+    except Exception as e:
+        return f"Error: {e}"
+
+def process_tab(tab_name):
+    ws = sheet.worksheet(tab_name)
+    values = ws.row_values(ROW_INDEX)
+
+    try:
+        symbol = values[0]
+        ltp = float(values[1])
+        rsi = float(values[2])
+        ema = float(values[3])
+        oi = float(values[4])
+        price_action = values[5]
+
+        # ---- SIGNAL LOGIC ----
+        final_signal = "HOLD"
+        if rsi > 60 and ltp > ema and "Bullish" in price_action:
+            final_signal = "BUY"
+        elif rsi < 40 and ltp < ema and "Bearish" in price_action:
+            final_signal = "SELL"
+
+        # Update final signal in sheet
+        ws.update_acell(f"G{ROW_INDEX}", final_signal)
+
+        # Place order if BUY/SELL
+        if final_signal in ["BUY", "SELL"]:
+            result = place_order(symbol, final_signal)
+            ws.update_acell(f"H{ROW_INDEX}", final_signal)
+            ws.update_acell(f"N{ROW_INDEX}", result)
+        else:
+            ws.update_acell(f"H{ROW_INDEX}", "HOLD")
+
+    except Exception as e:
+        print(f"Error in tab {tab_name}: {e}")
+        ws.update_acell(f"N{ROW_INDEX}", f"Error: {e}")
+
+# ====== MAIN ======
+for tab in TABS:
+    process_tab(tab)
+    time.sleep(1)
+
+print("✅ All tabs processed.")
