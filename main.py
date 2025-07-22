@@ -333,3 +333,91 @@ for sheet_name in sheet_names:
     except Exception as e:
         print(f"⚠️ Error in sheet '{sheet_name}':", e)
 
+import gspread
+import os, json, requests, time
+import pandas as pd
+from smartapi import SmartConnect
+from oauth2client.service_account import ServiceAccountCredentials
+
+# ✅ Telegram
+def send_telegram(msg):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                      data={"chat_id": chat_id, "text": msg})
+
+# ✅ Angel One Login
+api_key = os.environ["ANGEL_API_KEY"]
+client_id = os.environ["ANGEL_CLIENT_ID"]
+pwd = os.environ["ANGEL_PASSWORD"]
+totp = os.environ["ANGEL_TOTP"]
+
+smartApi = SmartConnect(api_key)
+session = smartApi.generateSession(client_id, pwd, totp)
+feed_token = smartApi.getfeedToken()
+
+# ✅ Token mapping
+symbol_tokens = {
+    "BANKNIFTY": "99926009",
+    "NIFTY50": "99926000",
+    "FINNIFTY": "99926004",
+    "CRUDEOIL": "26009",
+    "GOLD": "26018",
+    "SILVER": "26019",
+    "NG": "26003"
+}
+
+# ✅ Google Sheet Setup
+creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+gc = gspread.authorize(creds)
+
+spreadsheet = gc.open_by_key(os.environ["SHEET_ID"])
+sheet_names = ["BANKNIFTY", "NIFTY50", "FINNIFTY", "CRUDEOIL", "GOLD", "SILVER", "NG"]
+
+# ✅ Place Order
+def place_order(symbol, action, token):
+    try:
+        orderparams = {
+            "variety": "NORMAL",
+            "tradingsymbol": symbol,
+            "symboltoken": token,
+            "transactiontype": action.upper(),
+            "exchange": "NSE" if symbol in ["BANKNIFTY", "NIFTY50", "FINNIFTY"] else "MCX",
+            "ordertype": "MARKET",
+            "producttype": "INTRADAY",
+            "duration": "DAY",
+            "price": "0",
+            "quantity": 1
+        }
+        result = smartApi.placeOrder(orderparams)
+        return f"✅ Order Placed: {result}"
+    except Exception as e:
+        return f"❌ Order Error: {e}"
+
+# ✅ Loop Each Sheet
+for sheet_name in sheet_names:
+    ws = spreadsheet.worksheet(sheet_name)
+    data = ws.get_all_records()
+
+    for i, row in enumerate(data, start=2):
+        try:
+            symbol = row.get("Symbol", "").strip().upper()
+            action = row.get("Action", "").strip().upper()
+
+            if symbol and action in ["BUY", "SELL"]:
+                token = symbol_tokens.get(sheet_name)
+                result = place_order(symbol, action, token)
+                ws.update_cell(i, 14, result)
+                send_telegram(f"{sheet_name}: {symbol} → {action}\n{result}")
+            else:
+                ws.update_cell(i, 14, "HOLD")
+
+        except Exception as e:
+            ws.update_cell(i, 14, f"⚠️ Error: {e}")
+            send_telegram(f"❌ Error in {sheet_name}: {e}")
+
+print("✅ All tabs processed successfully.")
+
