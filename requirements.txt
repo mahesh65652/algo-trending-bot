@@ -1,8 +1,4 @@
 pandas
-gspread
-oauth2client
-
-pandas
 yfinance
 gspread
 oauth2client
