@@ -421,46 +421,81 @@ for sheet_name in sheet_names:
 
 print("✅ All tabs processed successfully.")
 
+import os
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import requests
-import os
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+import pytz
 
-# Setup Google Sheets connection
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+# ========== 🔐 Environment Variables ==========
+GOOGLE_SHEET_ID_NSE = os.getenv("SHEET_ID")
+GOOGLE_SHEET_ID_MCX = os.getenv("MCX_SHEET_ID")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Write credentials to a file
-with open("creds.json", "w") as f:
-    f.write(creds_json)
-
-credentials = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+# ========== 🌐 Google Sheet Auth ==========
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+credentials = ServiceAccountCredentials.from_json_keyfile_name('creds.json', scope)
 client = gspread.authorize(credentials)
 
-# Open sheet using SHEET_ID
-sheet_id = os.getenv("SHEET_ID")
-sheet = client.open_by_key(sheet_id).sheet1
+# ========== 📤 Telegram Alert ==========
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg}
+    try:
+        requests.post(url, data=payload)
+    except Exception as e:
+        print("Telegram Error:", e)
 
-# Read data into pandas DataFrame
-data = sheet.get_all_records()
-df = pd.DataFrame(data)
+# ========== 📈 Indicator Logic ==========
+def get_signal(rsi, price, ema, oi, price_action):
+    if rsi and ema and oi:
+        if rsi < 30 and price > ema and "BUY" in price_action:
+            return "BUY"
+        elif rsi > 70 and price < ema and "SELL" in price_action:
+            return "SELL"
+    return "HOLD"
 
-# Find all Buy signals
-buy_signals = df[df["Action"].str.lower() == "buy"]
+# ========== 🔁 Process Each Sheet ==========
+def process_sheet(sheet_id, market_type):
+    sheet = client.open_by_key(sheet_id).sheet1
+    data = sheet.get_all_records()
+    df = pd.DataFrame(data)
 
-# Send Telegram message if buy signals exist
-if not buy_signals.empty:
-    message = "📢 *Buy Signals Found:*\n"
-    for _, row in buy_signals.iterrows():
-        message += f"🔹 {row['Symbol']} at ₹{row['LTP']}\n"
+    final_signals = []
+    now = datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
 
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    for i, row in df.iterrows():
+        symbol = row.get("Symbol")
+        price = float(row.get("LTP", 0))
+        rsi = float(row.get("RSI", 0))
+        ema = float(row.get("EMA", 0))
+        oi = float(row.get("OI", 0))
+        price_action = row.get("Price Action", "").upper()
 
-    requests.post(
-        telegram_url,
-        data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    )
+        signal = get_signal(rsi, price, ema, oi, price_action)
+        final_signals.append(signal)
 
+        # 🧾 Log or Alert
+        if signal in ["BUY", "SELL"]:
+            send_telegram(f"📢 {market_type} | {symbol} | {signal}\n💰Price: {price} | RSI: {rsi} | EMA: {ema} | OI: {oi}\n🕒 {now}")
+
+    # Update Final Signal Column
+    try:
+        col_index = df.columns.get_loc("Final Signal") + 1
+        sheet.batch_update([{
+            'range': f"{chr(65 + col_index)}2:{chr(65 + col_index)}{len(df)+1}",
+            'values': [[s] for s in final_signals]
+        }])
+        print(f"✅ {market_type} Signals Updated")
+    except Exception as e:
+        print("❌ Error Updating Sheet:", e)
+
+# ========== 🚀 Main ==========
+if __name__ == "__main__":
+    print("🚀 Running Algo Bot")
+    process_sheet(GOOGLE_SHEET_ID_NSE, "NSE")
+    process_sheet(GOOGLE_SHEET_ID_MCX, "MCX")
+    print("✅ Done")
