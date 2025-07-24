@@ -421,3 +421,46 @@ for sheet_name in sheet_names:
 
 print("✅ All tabs processed successfully.")
 
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import pandas as pd
+import requests
+import os
+
+# Setup Google Sheets connection
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+# Write credentials to a file
+with open("creds.json", "w") as f:
+    f.write(creds_json)
+
+credentials = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+client = gspread.authorize(credentials)
+
+# Open sheet using SHEET_ID
+sheet_id = os.getenv("SHEET_ID")
+sheet = client.open_by_key(sheet_id).sheet1
+
+# Read data into pandas DataFrame
+data = sheet.get_all_records()
+df = pd.DataFrame(data)
+
+# Find all Buy signals
+buy_signals = df[df["Action"].str.lower() == "buy"]
+
+# Send Telegram message if buy signals exist
+if not buy_signals.empty:
+    message = "📢 *Buy Signals Found:*\n"
+    for _, row in buy_signals.iterrows():
+        message += f"🔹 {row['Symbol']} at ₹{row['LTP']}\n"
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    requests.post(
+        telegram_url,
+        data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+    )
+
