@@ -558,61 +558,70 @@ def main():
     for tab in nse_tabs:
         process_sheet(nse_sheet, tab)
 
-if __name__ == "__main__":
-    main()
 import gspread
-import pandas as pd
-import os
-import requests
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- 🔐 Credentials Setup ---
+# Google Sheet credentials
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
-# --- 📄 Load Both Sheets ---
-mcx_sheet = client.open_by_key(os.environ['MCX_SHEET_ID'])
-nse_sheet = client.open_by_key(os.environ['SHEET_ID'])  # Sheet_2
+# Sheet IDs
+sheet_ids = {
+    "MCX": "MCX_SHEET_ID_HERE",       # ← यहाँ अपना MCX Sheet ID डालें
+    "NSE": "NSE_SHEET_ID_HERE"        # ← यहाँ अपना NSE Sheet ID डालें
+}
 
-# --- 📢 Telegram Function ---
-def send_telegram(message):
-    token = os.environ['TELEGRAM_BOT_TOKEN']
-    chat_id = os.environ['TELEGRAM_CHAT_ID']
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message})
+# Tabs for each Sheet
+sheet_tabs = {
+    "MCX": ["GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER", "ZINC", "LEAD", "NICKEL"],
+    "NSE": ["BANKNIFTY", "NIFTY50", "FINNIFTY", "MIDCPNIFTY"]
+}
 
-# --- 🔁 Process One Tab Function ---
-def process_tab(sheet, tab_name, market):
-    try:
-        worksheet = sheet.worksheet(tab_name)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
+# Signal Generator
+def generate_signals(sheet_type):
+    sheet = client.open_by_key(sheet_ids[sheet_type])
+    for tab in sheet_tabs[sheet_type]:
+        try:
+            print(f"🔄 Processing sheet: {tab}")
+            worksheet = sheet.worksheet(tab)
+            data = worksheet.get_all_values()
 
-        updates = []
-        for i, row in df.iterrows():
-            signal = row.get("Final Signal", "").strip().lower()
-            symbol = row.get("Symbol", "").strip()
-            if signal in ["buy", "sell"]:
-                updates.append((i + 2, signal.capitalize(), symbol))  # Row index + 2 (1 for header, 1-based index)
+            if len(data) < 2:
+                print(f"⚠️ No data in {tab}")
+                continue
 
-        for row_idx, action, symbol in updates:
-            worksheet.update_acell(f"N{row_idx}", action)  # 'N' column = 14th column (Action)
+            headers = data[0]
+            row = data[1]
 
-            msg = f"📈 {market} | {symbol} | {action}"
-            send_telegram(msg)
-            print(f"✅ Placed {action} for {symbol} in {tab_name}")
+            col_map = {header: idx for idx, header in enumerate(headers)}
+            if not all(k in col_map for k in ["RSI", "EMA", "OI", "LTP", "Signal"]):
+                print(f"⚠️ Missing required columns in {tab}")
+                continue
 
-    except Exception as e:
-        print(f"❌ Error in {tab_name}: {e}")
+            rsi = float(row[col_map["RSI"]])
+            ema = float(row[col_map["EMA"]])
+            oi = float(row[col_map["OI"]])
+            ltp = float(row[col_map["LTP"]])
 
-# --- 🔁 Run MCX Sheet (Sheet_1, only 1 tab) ---
-process_tab(mcx_sheet, "Sheet_1", "MCX")
+            # Signal Logic
+            if rsi < 30 and ltp > ema and oi > 0:
+                signal = "BUY"
+            elif rsi > 70 and ltp < ema and oi > 0:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
 
-# --- 🔁 Run NSE Sheet (Sheet_2 with multiple tabs) ---
-nse_tab_names = ["NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]
-for tab in nse_tab_names:
-    process_tab(nse_sheet, tab, "NSE")
+            worksheet.update_cell(2, col_map["Signal"] + 1, signal)
+            print(f"✅ Signal for Row 2: {signal}")
+            print(f"✅ Finished processing: {tab}")
 
-print("✅ Script finished.")
+        except Exception as e:
+            print(f"❌ Error in {tab} → {e}")
+
+# Run for both MCX and NSE
+generate_signals("MCX")
+generate_signals("NSE")
+
+print("🎯 All sheets processed.")
 
