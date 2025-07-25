@@ -207,3 +207,31 @@ jobs:
 
     - name: 🚀 Run Main Script
       run: python main.py
+name: Auto Run Algo Every 15 Minutes
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"  # हर 15 मिनट पर स्क्रिप्ट चलेगी
+  workflow_dispatch:        # मैन्युअल चलाने के लिए भी
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Repo क्लोन करें
+        uses: actions/checkout@v3
+
+      - name: 🐍 Python इंस्टॉल करें
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 🧪 Dependencies इंस्टॉल करें
+        run: |
+          pip install -r requirements.txt
+
+      - name: 🚀 Run your Algo Script
+        run: |
+          python main.py
+
