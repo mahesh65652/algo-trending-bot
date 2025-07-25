@@ -34,3 +34,53 @@ if response.status_code == 200:
 
 else:
     print("❌ Failed to generate token:", response.text)
+
+
+import requests
+import json
+import pyotp
+
+# ✅ अपनी जानकारी नीचे भरो
+API_KEY = "10zzA50X"
+CLIENT_CODE = "A123456"       # Angel One Client ID
+PASSWORD = "YourPassword123"
+TOTP_SECRET = "O5HWT7XOSIIRU44G2CCHZC3EDQ"  # Angel One TOTP Secret
+
+# 🔁 TOTP Generate करो
+totp = pyotp.TOTP(TOTP_SECRET).now()
+
+# 🔗 Angel One Token URL
+url = "https://apiconnect.angelone.in/rest/auth/angelbroking/jwt/v1/generateTokens"
+
+# 📦 Request Payload
+payload = {
+    "clientcode": CLIENT_CODE,
+    "password": PASSWORD,
+    "totp": totp,
+    "appsource": API_KEY
+}
+
+headers = {
+    "Content-Type": "application/json"
+}
+
+# 🚀 Token Request भेजो
+response = requests.post(url, json=payload, headers=headers)
+
+# 📦 Response Process करो
+if response.status_code == 200:
+    data = response.json()
+    jwt_token = data.get("data", {}).get("jwtToken")
+    refresh_token = data.get("data", {}).get("refreshToken")
+
+    print("✅ JWT Token:", jwt_token)
+    print("🔁 Refresh Token:", refresh_token)
+
+    # 💾 Token Save करो
+    with open("tokens.json", "w") as f:
+        json.dump(data["data"], f, indent=2)
+    print("💾 Saved to tokens.json")
+
+else:
+    print("❌ Failed:", response.status_code, response.text)
+
