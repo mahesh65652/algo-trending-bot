@@ -499,3 +499,64 @@ if __name__ == "__main__":
     process_sheet(GOOGLE_SHEET_ID_NSE, "NSE")
     process_sheet(GOOGLE_SHEET_ID_MCX, "MCX")
     print("✅ Done")
+import gspread
+import pandas as pd
+from oauth2client.service_account import ServiceAccountCredentials
+import os
+
+def get_gsheet_client():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    with open("creds.json", "w") as f:
+        f.write(creds_json)
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+    client = gspread.authorize(creds)
+    return client
+
+def process_sheet(sheet, tab_name):
+    try:
+        ws = sheet.worksheet(tab_name)
+        data = ws.get_all_records()
+        df = pd.DataFrame(data)
+
+        print(f"\n📘 Processing Tab: {tab_name}")
+        for i, row in df.iterrows():
+            symbol = row.get("Symbol", "").strip().upper()
+            rsi = float(row.get("RSI", 0))
+            ema = float(row.get("EMA", 0))
+            oi = float(row.get("OI", 0))
+            price_action = row.get("Price Action", "").strip().upper()
+
+            # 🔁 Algo Logic
+            signal = "HOLD"
+            if rsi > 60 and price_action == "BULLISH" and oi > 0:
+                signal = "BUY"
+            elif rsi < 40 and price_action == "BEARISH" and oi > 0:
+                signal = "SELL"
+
+            # 📍 Update Final Signal (G column = 7)
+            ws.update_cell(i+2, 7, signal)
+            print(f"{symbol} → {signal}")
+
+    except Exception as e:
+        print(f"❌ Error in {tab_name}: {e}")
+
+def main():
+    client = get_gsheet_client()
+
+    # 📘 MCX Sheet_1
+    mcx_sheet_id = os.environ.get("MCX_SHEET_ID")
+    mcx_sheet = client.open_by_key(mcx_sheet_id)
+    mcx_tabs = ["CRUDEOIL", "GOLD", "SILVER", "NG"]
+    for tab in mcx_tabs:
+        process_sheet(mcx_sheet, tab)
+
+    # 📗 NSE Sheet_2
+    nse_sheet_id = os.environ.get("SHEET_ID")
+    nse_sheet = client.open_by_key(nse_sheet_id)
+    nse_tabs = ["BANKNIFTY", "NIFTY50", "FINNIFTY", "MIDCPNIFTY"]
+    for tab in nse_tabs:
+        process_sheet(nse_sheet, tab)
+
+if __name__ == "__main__":
+    main()
