@@ -560,3 +560,59 @@ def main():
 
 if __name__ == "__main__":
     main()
+import gspread
+import pandas as pd
+import os
+import requests
+from oauth2client.service_account import ServiceAccountCredentials
+
+# --- 🔐 Credentials Setup ---
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
+client = gspread.authorize(creds)
+
+# --- 📄 Load Both Sheets ---
+mcx_sheet = client.open_by_key(os.environ['MCX_SHEET_ID'])
+nse_sheet = client.open_by_key(os.environ['SHEET_ID'])  # Sheet_2
+
+# --- 📢 Telegram Function ---
+def send_telegram(message):
+    token = os.environ['TELEGRAM_BOT_TOKEN']
+    chat_id = os.environ['TELEGRAM_CHAT_ID']
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": message})
+
+# --- 🔁 Process One Tab Function ---
+def process_tab(sheet, tab_name, market):
+    try:
+        worksheet = sheet.worksheet(tab_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+
+        updates = []
+        for i, row in df.iterrows():
+            signal = row.get("Final Signal", "").strip().lower()
+            symbol = row.get("Symbol", "").strip()
+            if signal in ["buy", "sell"]:
+                updates.append((i + 2, signal.capitalize(), symbol))  # Row index + 2 (1 for header, 1-based index)
+
+        for row_idx, action, symbol in updates:
+            worksheet.update_acell(f"N{row_idx}", action)  # 'N' column = 14th column (Action)
+
+            msg = f"📈 {market} | {symbol} | {action}"
+            send_telegram(msg)
+            print(f"✅ Placed {action} for {symbol} in {tab_name}")
+
+    except Exception as e:
+        print(f"❌ Error in {tab_name}: {e}")
+
+# --- 🔁 Run MCX Sheet (Sheet_1, only 1 tab) ---
+process_tab(mcx_sheet, "Sheet_1", "MCX")
+
+# --- 🔁 Run NSE Sheet (Sheet_2 with multiple tabs) ---
+nse_tab_names = ["NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]
+for tab in nse_tab_names:
+    process_tab(nse_sheet, tab, "NSE")
+
+print("✅ Script finished.")
+
