@@ -173,3 +173,37 @@ jobs:
         TOTP: ${{ secrets.TOTP }}
       run: python main.py
 
+.github/workflows/main.yml
+
+name: Auto Update Google Sheets for NSE & MCX
+
+on:
+  schedule:
+    - cron: '*/15 3-10 * * 1-5'  # ⏱ Runs every 15 minutes Mon-Fri during market hours IST (8:30am–3:30pm UTC)
+  workflow_dispatch:  # 🚀 Manual Run
+
+jobs:
+  update-sheets:
+    runs-on: ubuntu-latest
+
+    env:
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      SHEET_ID: ${{ secrets.SHEET_ID }}            # 🟢 NSE Sheet (Sheet_2)
+      MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}    # 🔵 MCX Sheet (Sheet_1)
+
+    steps:
+    - name: 📥 Checkout Repo
+      uses: actions/checkout@v3
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: 📦 Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 🚀 Run Main Script
+      run: python main.py
