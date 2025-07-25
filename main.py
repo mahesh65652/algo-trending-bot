@@ -568,8 +568,8 @@ client = gspread.authorize(creds)
 
 # Sheet IDs
 sheet_ids = {
-    "MCX": "MCX_SHEET_ID_HERE",       # ← यहाँ अपना MCX Sheet ID डालें
-    "NSE": "NSE_SHEET_ID_HERE"        # ← यहाँ अपना NSE Sheet ID डालें
+    "MCX": "1zNq9Hq9QaNwE7my9xGkq28hI9UNuYai4YV3P9hUzWxQ",
+    "NSE": "1xJQI1vYxPZKmX2tdsCpkMUaY2Hq08Z1ZhiEHpJEx0Dk"
 }
 
 # Tabs for each Sheet
@@ -624,4 +624,3 @@ generate_signals("MCX")
 generate_signals("NSE")
 
 print("🎯 All sheets processed.")
-
