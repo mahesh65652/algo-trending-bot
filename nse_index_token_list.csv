@@ -1,7 +1,9 @@
 symbol,token,exchange
+
 NIFTY,256265,NSE
 BANKNIFTY,260105,NSE
 FINNIFTY,49459,NSE
 MIDCPNIFTY,49233,NSE
 SENSEX,265,NSE
+
 /data/index_tokens.csv
