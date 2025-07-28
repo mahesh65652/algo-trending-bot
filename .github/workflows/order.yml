@@ -1,0 +1,34 @@
+name: Auto Order
+
+on:
+  schedule:
+    - cron: '0 4 * * 1-5'  # Runs every weekday 9:30am IST (adjust if needed)
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install gspread oauth2client SmartApi-python pyotp requests
+
+      - name: Run Auto Order Script
+        run: python order_place.py
+        env:
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
+          CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
+          TOTP: ${{ secrets.TOTP }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          SHEET_NAME: ${{ secrets.SHEET_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
