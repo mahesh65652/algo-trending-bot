@@ -220,3 +220,100 @@ for sheet in sheets:
             time.sleep(1)
 
 print("✅ All Orders Processed.")
+
+import os
+import json
+import time
+import gspread
+import requests
+from smartapi import SmartConnect
+from oauth2client.service_account import ServiceAccountCredentials
+
+# ✅ Telegram Alert (Optional)
+def send_telegram(message):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": message})
+
+# ✅ Token Mapping (Customize as per your sheet)
+token_map = {
+    "CRUDEOIL": {"token": "21906", "exchange": "MCX"},
+    "NATURALGAS": {"token": "21921", "exchange": "MCX"},
+    "SILVER": {"token": "22032", "exchange": "MCX"},
+    "GOLD": {"token": "21837", "exchange": "MCX"},
+    "NIFTY": {"token": "3045", "exchange": "NSE"},
+    "BANKNIFTY": {"token": "26009", "exchange": "NSE"},
+    "RELIANCE": {"token": "2885", "exchange": "NSE"},
+    "TCS": {"token": "11536", "exchange": "NSE"}
+}
+
+# ✅ Angel One Login
+client_id = os.environ['CLIENT_ID']
+api_key = os.environ['API_KEY']
+refresh_token = os.environ['FEED_TOKEN']
+
+obj = SmartConnect(api_key=api_key)
+session = obj.generateSession(client_id, refresh_token)
+auth_token = session['data']['jwtToken']
+
+# ✅ Google Sheet Auth
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS_JSON'])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+
+sheet_id = os.environ['SHEET_ID']
+spreadsheet = client.open_by_key(sheet_id)
+sheets = spreadsheet.worksheets()
+
+# ✅ Place Order Function
+def place_order(symbol, action):
+    if symbol not in token_map:
+        return f"❌ Symbol not in map: {symbol}"
+
+    token_info = token_map[symbol]
+    order_params = {
+        "variety": "NORMAL",
+        "tradingsymbol": symbol,
+        "symboltoken": token_info["token"],
+        "transactiontype": action.upper(),
+        "exchange": token_info["exchange"],
+        "ordertype": "MARKET",
+        "producttype": "INTRADAY",
+        "duration": "DAY",
+        "price": 0,
+        "quantity": 1
+    }
+
+    try:
+        order_id = obj.placeOrder(order_params)
+        print(f"✅ Order Placed: {symbol} | {action} | ID: {order_id}")
+        return f"✅ Order ID: {order_id}"
+    except Exception as e:
+        print(f"❌ Order Failed: {symbol} | {action} | Error: {e}")
+        return f"❌ {e}"
+
+# ✅ Loop through all sheets and process signals
+for sheet in sheets:
+    print(f"\n📄 Processing Sheet: {sheet.title}")
+    data = sheet.get_all_values()
+    rows = data[1:]  # skip header
+
+    for i, row in enumerate(rows):
+        try:
+            symbol = row[0].strip().upper()
+            action = row[7].strip().capitalize()  # Column H = Action
+            status = row[8].strip() if len(row) > 8 else ""  # Column I = Status
+
+            if action in ["Buy", "Sell"] and status != "Order Placed":
+                result = place_order(symbol, action)
+                sheet.update_cell(i + 2, 9, "Order Placed")  # Column I
+                send_telegram(f"📢 {symbol} → {action} → {result}")
+                time.sleep(1)
+        except Exception as e:
+            print(f"⚠️ Row Error: {i+2} → {e}")
+
+print("✅ All Orders Processed.")
+
