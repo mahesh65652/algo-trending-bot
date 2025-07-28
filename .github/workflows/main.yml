@@ -1,198 +1,27 @@
-name: Run Algo Trading Bot
-
-on:
-  workflow_dispatch:  # मैन्युअली GitHub से रन करने के लिए
-  schedule:
-    - cron: '*/30 3-10 * * 1-5'  # हर 30 मिनट पर सुबह 8:30 से 3:30 तक (सोम–शुक्र), IST
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: ⬇️ Checkout repo
-      uses: actions/checkout@v3
-
-    - name: 🐍 Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: 📦 Install dependencies
-      run: |
-        pip install gspread oauth2client pandas requests
-
-    - name: 🚀 Run Algo Bot
-      run: python main.py
-      env:
-        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        SHEET_ID: ${{ secrets.SHEET_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-name: Run Algo Trading Bot
-
-on:
-  workflow_dispatch:  # मैन्युअली GitHub से रन करने के लिए
-  schedule:
-    - cron: '*/30 3-10 * * 1-5'  # हर 30 मिनट सुबह 8:30 से 3:30 तक (IST), सोमवार से शुक्रवार
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: ⬇️ Checkout repo
-      uses: actions/checkout@v3
-
-    - name: 🐍 Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: 📦 Install dependencies
-      run: |
-        pip install gspread oauth2client pandas requests
-
-    - name: 🛂 Create creds.json from secret
-      run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
-
-    - name: 🚀 Run Algo Bot
-      run: python main.py
-      env:
-        GOOGLE_APPLICATION_CREDENTIALS: creds.json
-        SHEET_ID: ${{ secrets.SHEET_ID }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-name: Run Algo Bot
+name: 🚀 Run Full Algo Bot (NSE + MCX + Telegram)
 
 on:
   schedule:
-    - cron: "*/15 * * * *"  # हर 15 मिनट पर चलाने के लिए
-  workflow_dispatch:        # मैन्युअली भी चला सकते हैं
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.10
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run script
-        env:
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-          SHEET_ID: ${{ secrets.SHEET_ID }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python main.py
-
-
-name: 🚀 Run Full Algo Bot (NIFTY + MCX)
-
-on:
-  schedule:
-    - cron: '*/15 3-18 * * 1-5'  # IST: 9:00 AM – 11:30 PM, हर 15 मिनट, Mon–Fri
-  workflow_dispatch:  # मैन्युअल ट्रिगर भी
+    - cron: '*/15 3-18 * * 1-5'  # हर 15 मिनट पर IST (8:30 AM – 11:30 PM), Mon–Fri
+  workflow_dispatch:             # GitHub से मैन्युअल ट्रिगर भी
 
 jobs:
   run-algo:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: ⬇️ Checkout repo
-        uses: actions/checkout@v3
-
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: 📦 Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: 🛂 Create creds.json
-        run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
-
-      - name: 🚀 Run main.py (NIFTY + MCX)
-        run: python main.py
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: creds.json
-          SHEET_ID: ${{ secrets.SHEET_ID }}          # NIFTY Sheet ID
-          MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}  # MCX Sheet ID (optional)
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-name: 🔁 Run NSE + MCX Algo Bot
-
-on:
-  schedule:
-    - cron: "*/15 * * * *"   # हर 15 मिनट पर (24x7 चल सकता है)
-  workflow_dispatch:         # GitHub से मैन्युअली भी रन कर सकते हैं
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: ⬇️ Checkout code
-      uses: actions/checkout@v3
-
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.10
-
-    - name: 📦 Install dependencies
-      run: |
-        pip install -r requirements.txt
-
-    - name: 🛂 Create Google credentials file
-      run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
-
-    - name: 🚀 Run NSE + MCX Algo Bot
-      env:
-        GOOGLE_APPLICATION_CREDENTIALS: creds.json
-        SHEET_ID: ${{ secrets.SHEET_ID }}             # NSE Sheet
-        MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}     # MCX Sheet
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-        ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
-        CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
-        TOTP: ${{ secrets.TOTP }}
-      run: python main.py
-
-.github/workflows/main.yml
-
-name: Auto Update Google Sheets for NSE & MCX
-
-on:
-  schedule:
-    - cron: '*/15 3-10 * * 1-5'  # ⏱ Runs every 15 minutes Mon-Fri during market hours IST (8:30am–3:30pm UTC)
-  workflow_dispatch:  # 🚀 Manual Run
-
-jobs:
-  update-sheets:
-    runs-on: ubuntu-latest
-
     env:
       GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-      SHEET_ID: ${{ secrets.SHEET_ID }}            # 🟢 NSE Sheet (Sheet_2)
-      MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}    # 🔵 MCX Sheet (Sheet_1)
+      SHEET_ID: ${{ secrets.SHEET_ID }}             # 🟢 NSE Sheet ID
+      MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}     # 🔵 MCX Sheet ID
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+      ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
+      CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
+      TOTP: ${{ secrets.TOTP }}
 
     steps:
-    - name: 📥 Checkout Repo
+    - name: ⬇️ Checkout Repo
       uses: actions/checkout@v3
 
     - name: 🐍 Set up Python
@@ -205,36 +34,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: 🚀 Run Main Script
+    - name: 🛂 Create Google Credentials
+      run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
+
+    - name: 🚀 Run Main Script (Algo + Sheet + Telegram)
       run: python main.py
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: creds.json
 
-   .github/workflows/main.yml
-
-name: Auto Run Every 5 Minutes
-
-on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
-
-jobs:
-  run-script:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.11
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run main script
-      run: python main.py
-   
