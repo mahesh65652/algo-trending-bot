@@ -1,7 +1,7 @@
 import json
 from SmartApi.smartConnect import SmartConnect
 
-# Load credentials from JSON file
+# Step 1: Load credentials from credentials.json
 with open("credentials.json") as f:
     creds = json.load(f)
 
@@ -10,92 +10,27 @@ client_id = creds["client_id"]
 password = creds["password"]
 totp = creds["totp"]
 
-# Create SmartConnect object
+# Step 2: Create SmartConnect object
 obj = SmartConnect(api_key=api_key)
 
 try:
-    # Login
-    data = obj.generateSession(client_id, password, totp)
+    # Step 3: Login & generate session
+    session = obj.generateSession(client_id, password, totp)
 
-    # Get tokens
-    refreshToken = data["data"]["refreshToken"]
-    feedToken = obj.getfeedToken()
+    # Step 4: Get tokens from session response
+    feed_token = session["data"]["feedToken"]
+    refresh_token = session["data"]["refreshToken"]
 
-    # Print tokens
-    print("Feed Token:", feedToken)
-    print("Refresh Token:", refreshToken)
+    print("Feed Token:", feed_token)
+    print("Refresh Token:", refresh_token)
 
-    # Save to JSON
+    # Step 5: Save tokens to token_output.json
     with open("token_output.json", "w") as outfile:
         json.dump({
-            "feed_token": feedToken,
-            "refresh_token": refreshToken
+            "feed_token": feed_token,
+            "refresh_token": refresh_token
         }, outfile, indent=4)
 
 except Exception as e:
-    print("Error:", str(e))
+    print("❌ Error generating tokens:", str(e))
 
-import json
-from SmartApi.smartConnect import SmartConnect
-
-with open("credentials.json") as f:
-    creds = json.load(f)
-
-api_key = creds["api_key"]
-client_id = creds["client_id"]
-password = creds["password"]
-totp = creds["totp"]
-
-obj = SmartConnect(api_key=api_key)
-
-try:
-    data = obj.generateSession(client_id, password, totp)
-    refreshToken = data["data"]["refreshToken"]
-    feedToken = obj.getfeedToken()
-
-    print("Feed Token:", feedToken)
-    print("Refresh Token:", refreshToken)
-
-    with open("token_output.json", "w") as outfile:
-        json.dump({
-            "feed_token": feedToken,
-            "refresh_token": refreshToken
-        }, outfile, indent=4)
-
-except Exception as e:
-    print("Error:", str(e))
-
-import json
-from SmartApi.smartConnect import SmartConnect
-
-# Load credentials from JSON file
-with open("credentials.json") as f:
-    creds = json.load(f)
-
-api_key = creds["api_key"]
-client_id = creds["client_id"]
-password = creds["password"]
-totp = creds["totp"]
-
-obj = SmartConnect(api_key=api_key)
-
-try:
-    # Login
-    data = obj.generateSession(client_id, password, totp)
-
-    # Tokens from response
-    feedToken = data["data"]["feedToken"]
-    refreshToken = data["data"]["refreshToken"]
-
-    print("Feed Token:", feedToken)
-    print("Refresh Token:", refreshToken)
-
-    # Save tokens
-    with open("token_output.json", "w") as outfile:
-        json.dump({
-            "feed_token": feedToken,
-            "refresh_token": refreshToken
-        }, outfile, indent=4)
-
-except Exception as e:
-    print("Error:", str(e))
