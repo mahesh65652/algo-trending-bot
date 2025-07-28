@@ -317,3 +317,75 @@ for sheet in sheets:
 
 print("✅ All Orders Processed.")
 
+import os
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from SmartApi import SmartConnect
+import pyotp
+import requests
+
+# ENV Variables
+SHEET_ID = os.getenv("SHEET_ID")
+SHEET_NAME = os.getenv("SHEET_NAME")
+API_KEY = os.getenv("ANGEL_API_KEY")
+API_SECRET = os.getenv("ANGEL_API_SECRET")
+CLIENT_CODE = os.getenv("CLIENT_CODE")
+TOTP_KEY = os.getenv("TOTP")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# Step 1: Telegram Alert Function
+def send_telegram(msg):
+    if msg:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
+        requests.post(url, data=data)
+
+# Step 2: Angel One Login
+def angel_login():
+    smartApi = SmartConnect(api_key=API_KEY)
+    token = pyotp.TOTP(TOTP_KEY).now()
+    data = smartApi.generateSession(CLIENT_CODE, API_SECRET, token)
+    return smartApi, data["data"]["refreshToken"]
+
+# Step 3: Read Google Sheet
+def read_sheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(eval(os.getenv("GOOGLE_CREDENTIALS_JSON")), scope)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
+    return sheet.get_all_records()
+
+# Step 4: Place Orders from Sheet Signals
+def place_orders():
+    smartApi, refresh_token = angel_login()
+    rows = read_sheet()
+    for row in rows:
+        action = row.get("Action", "").strip().upper()
+        symbol = row.get("Symbol", "").strip()
+        qty = int(row.get("Qty", 0))
+        exch = "NSE"
+        tradingsymbol = symbol
+        if action in ["BUY", "SELL"] and qty > 0:
+            order_type = "BUY" if action == "BUY" else "SELL"
+            try:
+                orderparams = {
+                    "variety": "NORMAL",
+                    "tradingsymbol": tradingsymbol,
+                    "symboltoken": "99926000",  # update with correct token
+                    "transactiontype": order_type,
+                    "exchange": exch,
+                    "ordertype": "MARKET",
+                    "producttype": "INTRADAY",
+                    "duration": "DAY",
+                    "price": 0,
+                    "squareoff": "0",
+                    "stoploss": "0",
+                    "quantity": qty
+                }
+                orderId = smartApi.placeOrder(orderparams)
+                send_telegram(f"{order_type} Order Placed: {symbol}, Qty: {qty}, ID: {orderId}")
+            except Exception as e:
+                send_telegram(f"❌ Failed to place {order_type} order for {symbol}: {str(e)}")
+
+place_orders()
