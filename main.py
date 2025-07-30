@@ -624,3 +624,71 @@ generate_signals("MCX")
 generate_signals("NSE")
 
 print("🎯 All sheets processed.")
+
+import time
+import os
+from telegram_helper import send_telegram
+from sheets_helper import get_gsheet_client, batch_update_signals
+
+import random
+
+print("🚀 Starting Algo Bot...")
+
+sheet_id = os.environ.get("SHEET_ID")
+client = get_gsheet_client()
+spreadsheet = client.open_by_key(sheet_id)
+sheets = spreadsheet.worksheets()
+
+# ✅ Dummy indicator logic
+def get_indicator_values():
+    price = random.randint(19000, 20000)
+    rsi = random.randint(10, 90)
+    ema = random.randint(19000, 20000)
+    oi = random.randint(100000, 500000)
+    return rsi, ema, oi, price
+
+def generate_signal(rsi, ema, price):
+    if rsi < 30 and price > ema:
+        return "BUY"
+    elif rsi > 70 and price < ema:
+        return "SELL"
+    return "HOLD"
+
+# ✅ Process each sheet
+for sheet in sheets:
+    print(f"\n📄 Processing Sheet: {sheet.title}")
+    try:
+        data = sheet.get_all_values()
+        headers, rows = data[0], data[1:]
+
+        all_signals = []
+
+        for i, row in enumerate(rows):
+            symbol = row[0].strip()
+            if not symbol: continue
+
+            rsi, ema, oi, price = get_indicator_values()
+            signal = generate_signal(rsi, ema, price)
+            all_signals.append(signal)
+
+            sheet.update_cell(i+2, 2, price)
+            sheet.update_cell(i+2, 3, rsi)
+            sheet.update_cell(i+2, 4, ema)
+            sheet.update_cell(i+2, 5, oi)
+            sheet.update_cell(i+2, 6, "N/A")
+            sheet.update_cell(i+2, 8, signal)
+
+            send_telegram(f"[{sheet.title}] {symbol}: {signal} @ {price} | RSI: {rsi}, EMA: {ema}, OI: {oi}")
+            time.sleep(0.5)  # Limit Telegram spam
+
+        # Update Final Signal (G) column in batch
+        final_signal_col_index = headers.index("Final Signal")
+        batch_update_signals(sheet, all_signals, final_signal_col_index)
+
+    except Exception as e:
+        print(f"❌ Error in {sheet.title}: {e}")
+        send_telegram(f"❌ Error in {sheet.title}: {e}")
+
+    time.sleep(2)  # To prevent sheet quota error
+
+print("✅ All Sheets Processed.")
