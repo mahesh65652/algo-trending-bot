@@ -1,0 +1,6 @@
+mcx_options.csv
+
+symbol,token,exchange
+CRUDEOIL29AUG24C7600,221101,MCX
+CRUDEOIL29AUG24P7000,221102,MCX
+...
