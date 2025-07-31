@@ -692,3 +692,44 @@ for sheet in sheets:
     time.sleep(2)  # To prevent sheet quota error
 
 print("✅ All Sheets Processed.")
+
+import requests
+import json
+import datetime
+
+# ✅ Google Apps Script Web App URL
+url = 'https://script.google.com/macros/s/AKfycbxLQu2W8mHqGOgBSI_YRqJeeK_gtBVR7j5pL4YOoVPJ6sbD5uzgDJ8G5Yawr1lk6o52/exec'
+
+# ✅ Sample MCX Data
+mcx_data = [
+    {
+        "symbol": "CRUDEOIL",
+        "token": 5633,
+        "exchange": "MCX",
+        "rsi": 48.32,
+        "ema": 7640.5,
+        "price": 7638,
+        "oi": 12050,
+        "signal": "BUY"
+    },
+    {
+        "symbol": "GOLD",
+        "token": 249563,
+        "exchange": "MCX",
+        "rsi": 53.21,
+        "ema": 72000,
+        "price": 72210,
+        "oi": 15030,
+        "signal": "SELL"
+    }
+]
+
+# 🕒 Timestamp जोड़ें
+for row in mcx_data:
+    row["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# 🚀 Send to Google Sheet
+response = requests.post(url, data=json.dumps(mcx_data), headers={'Content-Type': 'application/json'})
+
+print("📤 Sent:", len(mcx_data), "rows")
+print("📩 Response:", response.status_code, response.text)
