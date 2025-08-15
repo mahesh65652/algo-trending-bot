@@ -1,129 +1,93 @@
-main.py
-
 import os
-import json
 import gspread
-import requests
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from SmartApi import SmartConnect
+import time
+import requests
 
-# Fixed Indices List
-INDEX_LIST = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
+# ==== CONFIG ====
+TOKEN_MAP = {
+    "NIFTY": "99926000",        # Nifty 50
+    "BANKNIFTY": "99926007",    # Nifty Bank
+    "FINNIFTY": "99926037",     # Nifty Financial Services
+    "MIDCPNIFTY": "99926062",   # Nifty Midcap Select
+    "SENSEX": "1"               # BSE Sensex
+}
+EXCHANGE = {
+    "SENSEX": "BSE",
+    "NIFTY": "NSE",
+    "BANKNIFTY": "NSE",
+    "FINNIFTY": "NSE",
+    "MIDCPNIFTY": "NSE"
+}
 
-# Angel One API URLs
-LOGIN_URL = "https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/loginByPassword"
-SESSION_URL = "https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/generateSession"
-LTP_URL = "https://apiconnect.angelbroking.com/rest/secure/angelbroking/market/v1/quote"
-
-def get_google_sheet_client():
-    """Authorize Google Sheets API client."""
-    creds_json = os.environ['GOOGLE_CREDENTIALS_JSON']
-    creds_dict = json.loads(creds_json)
-
-    scope = ["https://spreadsheets.google.com/feeds",
-             "https://www.googleapis.com/auth/drive"]
+# ==== GOOGLE SHEET AUTH ====
+def get_gsheet():
+    creds_json = os.environ.get("GSHEET_CREDS_JSON")
+    if not creds_json:
+        raise Exception("❌ Missing GSHEET_CREDS_JSON in secrets")
+    creds_dict = eval(creds_json)
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(os.environ["GSHEET_ID"]).sheet1
+    return sheet
 
-def angel_one_login():
-    """Login to Angel One and return JWT token."""
-    api_key = os.environ['ANGEL_API_KEY']
-    api_secret = os.environ['ANGEL_API_SECRET']
-    client_code = os.environ['CLIENT_CODE']
-    totp = os.environ['TOTP']
+# ==== ANGEL ONE LOGIN ====
+def angel_login():
+    api_key = os.environ["ANGEL_API_KEY"]
+    api_secret = os.environ["ANGEL_API_SECRET"]
+    client_code = os.environ["CLIENT_CODE"]
+    totp = os.environ["TOTP"]
 
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-PrivateKey": api_key
-    }
+    obj = SmartConnect(api_key=api_key)
+    data = obj.generateSession(client_code, totp, api_secret)
+    if "data" not in data:
+        raise Exception(f"Login failed: {data}")
+    return obj
 
-    payload = {
-        "clientcode": client_code,
-        "password": api_secret,
-        "totp": totp
-    }
-
-    resp = requests.post(LOGIN_URL, headers=headers, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-
-    if not data.get("data") or not data["data"].get("jwtToken"):
-        raise RuntimeError("Angel One login failed!")
-
-    return data["data"]["jwtToken"]
-
-def get_ltp(jwt_token, symbol):
-    """Fetch LTP for given index from Angel One."""
-    headers = {
-        "Authorization": f"Bearer {jwt_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-PrivateKey": os.environ['ANGEL_API_KEY']
-    }
-
-    # Token mapping (example - replace with correct tokens)
-    token_map = {
-        "NIFTY": "99926000",
-        "BANKNIFTY": "99926009",
-        "FINNIFTY": "99926037",
-        "MIDCPNIFTY": "99926062",
-        "SENSEX": "1"
-    }
-
-    payload = {
-        "mode": "LTP",
-        "exchangeTokens": {"NSE": [token_map[symbol]]}
-    }
-
-    resp = requests.post(LTP_URL, headers=headers, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-
+# ==== FETCH LTP ====
+def fetch_ltp(obj, symbol):
+    token = TOKEN_MAP[symbol]
+    exch = EXCHANGE[symbol]
     try:
-        ltp = data["data"]["fetched"][0]["ltp"]
-    except Exception:
-        ltp = None
-    return ltp
+        data = obj.ltpData(exch, "INDEX", token)
+        return data["data"]["ltp"]
+    except Exception as e:
+        return None
 
-def update_google_sheet(data_list):
-    """Update Google Sheet with index data."""
-    gsheet_id = os.environ['GSHEET_ID']
-    client = get_google_sheet_client()
-    sheet = client.open_by_key(gsheet_id).sheet1
+# ==== MAIN RUN ====
+def run():
+    print("🚀 Starting Algo Bot for fixed indices...")
+    sheet = get_gsheet()
+    obj = angel_login()
 
+    results = [["Symbol", "Token", "Exchange", "LTP", "Timestamp"]]
+    for sym in TOKEN_MAP:
+        ltp = fetch_ltp(obj, sym)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        results.append([sym, TOKEN_MAP[sym], EXCHANGE[sym], ltp, ts])
+        print(f"📊 {sym}: {ltp}")
+
+    # Overwrite sheet
     sheet.clear()
-    sheet.append_row(["Index", "LTP", "Timestamp"])
-    for row in data_list:
-        sheet.append_row(row)
+    sheet.update(results)
+    print("✅ Sheet updated successfully!")
 
-def send_telegram_message(message):
-    """Send status to Telegram."""
+    send_telegram("✅ Algo Bot executed successfully!")
+
+# ==== TELEGRAM ALERT ====
+def send_telegram(msg):
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not bot_token or not chat_id:
-        return
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message})
-
-def run():
-    print("🚀 Running Auto Google Sheet Filler for Indices...")
-    try:
-        jwt_token = angel_one_login()
-        result_data = []
-        for index in INDEX_LIST:
-            ltp = get_ltp(jwt_token, index)
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            result_data.append([index, ltp, ts])
-            print(f"{index}: {ltp}")
-
-        update_google_sheet(result_data)
-        send_telegram_message("✅ Sheet updated successfully with latest index LTPs.")
-        print("✅ Completed successfully.")
-
-    except Exception as e:
-        send_telegram_message(f"⚠️ Bot failed: {e}")
-        raise
+    if bot_token and chat_id:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": msg})
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except Exception as e:
+        err_msg = f"⚠️ Algo Bot failed: {e}"
+        print(err_msg)
+        send_telegram(err_msg)
