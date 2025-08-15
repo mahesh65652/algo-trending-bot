@@ -22,8 +22,7 @@ jobs:
       - name: 📦 Install requirements
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade pycryptodome
-          pip install gspread oauth2client SmartApi requests pandas openpyxl
+          pip install gspread oauth2client smartapi-python requests pandas openpyxl pycryptodome
 
       - name: ▶️ Run Algo Bot
         run: python main.py
@@ -36,3 +35,4 @@ jobs:
           TOTP: ${{ secrets.TOTP }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
