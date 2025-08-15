@@ -1,3 +1,20 @@
+import os, json, sys
+
+# Verify GSHEET_CREDS_JSON secret
+creds_raw = os.getenv("GSHEET_CREDS_JSON")
+if not creds_raw:
+    sys.exit("❌ ERROR: GSHEET_CREDS_JSON secret missing!")
+
+try:
+    creds_dict = json.loads(creds_raw)
+except json.JSONDecodeError:
+    sys.exit("❌ ERROR: GSHEET_CREDS_JSON is not valid JSON! Please paste the full Service Account key.")
+
+# Extra check: private_key field present and correct format
+if "private_key" not in creds_dict or "-----BEGIN PRIVATE KEY-----" not in creds_dict["private_key"]:
+    sys.exit("❌ ERROR: GSHEET_CREDS_JSON is incomplete or private_key is invalid.")
+
+print("✅ Google Sheet credentials loaded successfully.")
 import os, json, gspread, requests
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi import SmartConnect
