@@ -1,72 +1,57 @@
-name: Run Full Algo Bot (NSE + MCX + Telegram)
+name: All-in-One Python Trading Bot
 
 on:
+  workflow_dispatch:        # Manual trigger
+  push:                     # Run on push
   schedule:
-    - cron: '*/15 3-18 * * 1-5'  # हर 15 मिनट पर IST (8:30 AM – 11:30 PM), Mon–Fri
-  workflow_dispatch:
+    - cron: '*/5 3-18 * * 1-5'  # हर 5 मिनट पर IST/NSE+MCX, Mon–Fri
 
 jobs:
-  run-algo:
-    runs-on: ubuntu-latest
-
-    env:
-      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-      SHEET_ID: ${{ secrets.SHEET_ID }}
-      MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
-      ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
-      CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
-      TOTP: ${{ secrets.TOTP }}
-
-    steps:
-    - name: Checkout Repo
-      uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Create Google Credentials
-      run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > creds.json
-
-    - name: Run Main Script (Algo + Sheet + Telegram) 🖕
-      run: python main.py
-      env:
-        GOOGLE_APPLICATION_CREDENTIALS: creds.json
-
-.github/workflows/push_runner.yml
-
-name: Run Python Script on Push
-
-on:
-  push:
-  workflow_dispatch:
-
-jobs:
-  run-script:
+  run-algo-bot:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: 🧾 Checkout Repo
+        uses: actions/checkout@v4
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: 🐍 Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install gspread oauth2client requests openpyxl pandas
 
-    - name: Run Your Main Script 🖕
-      run: python main.py
+      - name: ▶️ Run Main Trading Bot
+        run: |
+          python - <<EOF
+          import os, requests
+          import main  # आपका main.py import
+
+          # Telegram summary
+          bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+
+          try:
+              main.run()  # main.py में run() function होना चाहिए
+              message = "✅ Algo Bot executed successfully!"
+          except Exception as e:
+              message = f"⚠️ Algo Bot failed: {e}"
+
+          if bot_token and chat_id:
+              url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+              requests.post(url, data={"chat_id": chat_id, "text": message})
+          EOF
+        env:
+          GSHEET_CREDS_JSON: ${{ secrets.GSHEET_CREDS_JSON }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          MCX_SHEET_ID: ${{ secrets.MCX_SHEET_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_API_SECRET: ${{ secrets.ANGEL_API_SECRET }}
+          CLIENT_CODE: ${{ secrets.CLIENT_CODE }}
+          TOTP: ${{ secrets.TOTP }}
