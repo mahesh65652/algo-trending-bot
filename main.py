@@ -1,57 +1,54 @@
-import os
-import json
-import gspread
-import pandas as pd
-from SmartApi.smartConnect import SmartConnect
-from datetime import datetime
+import os, json, gspread, requests
+from oauth2client.service_account import ServiceAccountCredentials
+from SmartApi import SmartConnect
+import pyotp
 
-# -------------------------
-# Google Sheets Auth
-# -------------------------
+# ==== 1. Google Sheet Connect ====
 creds_dict = json.loads(os.environ['GSHEET_CREDS_JSON'])
-gc = gspread.service_account_from_dict(creds_dict)
-sheet = gc.open_by_key(os.environ['GSHEET_ID']).sheet1
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_key(os.environ['GSHEET_ID']).sheet1
 
-# -------------------------
-# Angel One Auth
-# -------------------------
-API_KEY = os.environ['ANGEL_API_KEY']
-API_SECRET = os.environ['ANGEL_API_SECRET']
-CLIENT_CODE = os.environ['CLIENT_CODE']
-TOTP = os.environ['TOTP']
+# ==== 2. Angel One API Connect ====
+api_key = os.environ['ANGEL_API_KEY']
+api_secret = os.environ['ANGEL_API_SECRET']
+client_code = os.environ['CLIENT_CODE']
+totp_key = os.environ['TOTP']
 
-smart = SmartConnect(api_key=API_KEY)
-data = smart.generateSession(CLIENT_CODE, API_SECRET, TOTP)
-auth_token = data['data']['jwtToken']
+smart_api = SmartConnect(api_key)
+totp = pyotp.TOTP(totp_key).now()
+data = smart_api.generateSession(client_code, totp, api_secret)
 
-# -------------------------
-# Token Map (NSE Index only)
-# -------------------------
-token_map = {
-    "NIFTY": "99926000",        # Nifty 50
-    "BANKNIFTY": "99926007",    # Nifty Bank
-    "FINNIFTY": "99926037",     # Nifty Financial Services
-    "MIDCPNIFTY": "99926062",   # Nifty Midcap Select
-    "SENSEX": "1"               # BSE Sensex
-}
+if not data.get('status'):
+    raise Exception(f"Login failed: {data}")
 
-# -------------------------
-# Fetch LTP Data
-# -------------------------
-rows = []
-for name, token in token_map.items():
+# ==== 3. Index tokens ====
+indices = [
+    {"name": "NIFTY", "token": "99926000"},
+    {"name": "BANKNIFTY", "token": "99926009"},
+    {"name": "FINNIFTY", "token": "99926037"},
+    {"name": "MIDCPNIFTY", "token": "99926064"},
+    {"name": "SENSEX", "token": "99919000"}
+]
+
+# ==== 4. Fetch LTP and update sheet ====
+rows = [["Index", "LTP"]]
+for idx in indices:
     try:
-        ltp_data = smart.ltpData('NSE', name, token)
+        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
         ltp = ltp_data['data']['ltp']
-        rows.append([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), name, ltp])
+        rows.append([idx["name"], ltp])
     except Exception as e:
-        rows.append([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), name, f"Error: {e}"])
+        rows.append([idx["name"], f"Error: {e}"])
 
-# -------------------------
-# Update Google Sheet
-# -------------------------
-df = pd.DataFrame(rows, columns=["Timestamp", "Symbol", "LTP"])
+# Clear & update
 sheet.clear()
-sheet.update([df.columns.values.tolist()] + df.values.tolist())
+sheet.update("A1", rows)
 
-print("✅ Sheet updated successfully!")
+# ==== 5. Telegram Alert ====
+bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+if bot_token and chat_id:
+    msg = "✅ Algo Bot executed successfully!\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows[1:])
+    requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": msg})
