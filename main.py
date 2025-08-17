@@ -1,8 +1,13 @@
-import os, json, requests, gspread, pyotp
+import os
+import json
+import requests
+import gspread
+import pyotp
+
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi import SmartConnect
 
-# ==== 1. Google Sheet Connect ====
+# --- 1. Google Sheet Connect ---
 try:
     creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
 except Exception as e:
@@ -14,7 +19,7 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["GSHEET_ID"]).sheet1
 print("✅ Google Sheet connected successfully.")
 
-# ==== 2. Angel One API Connect ====
+# --- 2. Angel One API Connect ---
 api_key     = os.environ.get("ANGEL_API_KEY")
 client_code = os.environ.get("CLIENT_CODE")
 pwd         = os.environ.get("PASSWORD")
@@ -31,16 +36,16 @@ if not data.get("status"):
     raise Exception(f"Login failed: {data}")
 print("✅ Angel One login successful.")
 
-# ==== 3. Index tokens ====
+# --- 3. Index tokens ---
 indices = [
-    {"name": "NIFTY",      "token": "99926000"},
-    {"name": "BANKNIFTY",  "token": "99926009"},
-    {"name": "FINNIFTY",   "token": "99926037"},
+    {"name": "NIFTY", "token": "99926000"},
+    {"name": "BANKNIFTY", "token": "99926009"},
+    {"name": "FINNIFTY", "token": "99926037"},
     {"name": "MIDCPNIFTY", "token": "99926064"},
-    {"name": "SENSEX",     "token": "99919000"},
+    {"name": "SENSEX", "token": "99919000"},
 ]
 
-# ==== 4. Fetch LTP and update sheet ====
+# --- 4. Fetch LTP and update sheet ---
 rows = [["Index", "LTP"]]
 for idx in indices:
     try:
@@ -53,9 +58,9 @@ for idx in indices:
 sheet.clear()
 sheet.update("A1", rows)
 
-# ==== 5. Telegram Alert ====
+# --- 5. Telegram Alert ---
 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-chat_id   = os.environ.get("TELEGRAM_CHAT_ID")
+chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 if bot_token and chat_id:
     msg = "✅ Algo Bot executed successfully!\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows[1:])
     requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": msg})
