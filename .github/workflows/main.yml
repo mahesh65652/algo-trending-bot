@@ -19,8 +19,10 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install gspread oauth2client pyotp requests pandas smartapi-python
+         pip install SmartApi
+         pip install gspread
+         pip install pyotp
+         pip install logzero
 
       - name: Run Algo Bot
         env:
