@@ -19,11 +19,12 @@ jobs:
 
       - name: Install Dependencies
         run: |
-         pip install SmartApi
-         pip install gspread
-         pip install pyotp
-         pip install logzero
-
+         python -m pip install --upgrade pip
+         pip install pandas numpy pyotp 
+         gspread oauth2client 
+         requests 
+         smartapi-python 
+         logzero
       - name: Run Algo Bot
         env:
           GSHEET_CREDS_JSON: ${{ secrets.GSHEET_CREDS_JSON }}
