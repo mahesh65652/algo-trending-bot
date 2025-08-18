@@ -3,75 +3,7 @@ import json
 import requests
 import gspread
 import pyotp
-
-from oauth2client.service_account import ServiceAccountCredentials
-from SmartApi import SmartConnect
-
-# --- 1. Google Sheet Connect ---
-try:
-    creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
-except Exception as e:
-    raise Exception(f"❌ GSHEET_CREDS_JSON invalid: {e}")
-
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_key(os.environ["GSHEET_ID"]).sheet1
-print("✅ Google Sheet connected successfully.")
-
-# --- 2. Angel One API Connect ---
-api_key     = os.environ.get("ANGEL_API_KEY")
-client_code = os.environ.get("CLIENT_CODE")
-pwd         = os.environ.get("PASSWORD")
-totp_key    = os.environ.get("TOTP")
-
-if not all([api_key, client_code, pwd, totp_key]):
-    raise Exception("❌ ERROR: Missing Angel One credentials in GitHub Secrets")
-
-smart_api = SmartConnect(api_key)
-totp = pyotp.TOTP(totp_key).now()
-data = smart_api.generateSession(client_code, pwd, totp)
-
-if not data.get("status"):
-    raise Exception(f"Login failed: {data}")
-print("✅ Angel One login successful.")
-
-# --- 3. Index tokens ---
-indices = [
-    {"name": "NIFTY", "token": "99926000"},
-    {"name": "BANKNIFTY", "token": "99926009"},
-    {"name": "FINNIFTY", "token": "99926037"},
-    {"name": "MIDCPNIFTY", "token": "99926064"},
-    {"name": "SENSEX", "token": "99919000"},
-]
-
-# --- 4. Fetch LTP and update sheet ---
-rows = [["Index", "LTP"]]
-for idx in indices:
-    try:
-        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
-        ltp = ltp_data["data"]["ltp"]
-        rows.append([idx["name"], ltp])
-    except Exception as e:
-        rows.append([idx["name"], f"Error: {e}"])
-
-sheet.clear()
-sheet.update("A1", rows)
-
-# --- 5. Telegram Alert ---
-bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-if bot_token and chat_id:
-    msg = "✅ Algo Bot executed successfully!\n" + "\n".join(f"{r[0]}: {r[1]}" for r in rows[1:])
-    requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": msg})
-
-print("✅ Strategy run completed.")
-
-import os
-import json
-import requests
-import gspread
-import pyotp
+import pandas as pd
 from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi import SmartConnect
@@ -85,7 +17,7 @@ except Exception as e:
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
-sheet = client.open_by_key(os.environ["GSHEET_ID"]).sheet1
+spreadsheet = client.open_by_key(os.environ["GSHEET_ID"])
 print("✅ Google Sheet connected successfully.")
 
 # --- 2. Angel One API Connect ---
@@ -122,7 +54,9 @@ if days_ahead == 0:
 expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()  # e.g. 21AUG24
 
 # --- 5. Fetch LTPs ---
-rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
+summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
+telegram_msg = "✅ ATM Options Algo Run\n"
+
 for idx in indices:
     try:
         # Spot LTP
@@ -139,37 +73,42 @@ for idx in indices:
         ce_ltp = smart_api.ltpData("NFO", "OPTIDX", ce_symbol)["data"]["ltp"]
         pe_ltp = smart_api.ltpData("NFO", "OPTIDX", pe_symbol)["data"]["ltp"]
 
-        rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
+        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
+
+        telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
+
+        # --- Daily Log Tab ---
+        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+        except:
+            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
+            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
+
+        ws.append_row([
+            datetime.now().strftime("%H:%M:%S"),
+            spot,
+            strike,
+            ce_ltp,
+            pe_ltp
+        ])
 
     except Exception as e:
-        rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
+        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
+        telegram_msg += f"\n{idx['name']} Error: {e}"
 
-# --- 6. Update Google Sheet ---
-sheet.clear()
-sheet.update("A1", rows)
+# --- 6. Update Google Sheet (Summary Tab) ---
+summary_ws = spreadsheet.sheet1
+summary_ws.clear()
+summary_ws.update("A1", summary_rows)
 
 # --- 7. Telegram Alert ---
 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
 chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 if bot_token and chat_id:
-    msg = "✅ ATM Options Algo Run\n"
-    for r in rows[1:]:
-        msg += f"\n{r[0]} Spot:{r[1]} Strike:{r[2]} CE:{r[3]} PE:{r[4]}"
-    requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": msg})
+    requests.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        data={"chat_id": chat_id, "text": telegram_msg}
+    )
 
 print("✅ Strategy run completed.")
-
-import pandas as pd
-
-# Instrument file load करना
-try:
-    df = pd.read_json("instruments.json")   # अगर json है
-    # df = pd.read_csv("instruments.csv")   # अगर csv है
-    print("✅ Instrument file loaded successfully")
-except Exception as e:
-    print("❌ Instrument file load error:", e)
-
-# Example: NIFTY, BANKNIFTY निकालने के लिए
-indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
-filtered = df[df['symbol'].isin(indices)][['token', 'symbol', 'exch_seg']]
-print(filtered)
