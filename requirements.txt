@@ -1,3 +1,11 @@
+gspread
+oauth2client
+pyotp
+pandas
+requests
+SmartApi
+logzero
+
 pandas
 yfinance
 gspread
