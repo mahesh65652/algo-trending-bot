@@ -159,3 +159,17 @@ if bot_token and chat_id:
 
 print("✅ Strategy run completed.")
 
+import pandas as pd
+
+# Instrument file load करना
+try:
+    df = pd.read_json("instruments.json")   # अगर json है
+    # df = pd.read_csv("instruments.csv")   # अगर csv है
+    print("✅ Instrument file loaded successfully")
+except Exception as e:
+    print("❌ Instrument file load error:", e)
+
+# Example: NIFTY, BANKNIFTY निकालने के लिए
+indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
+filtered = df[df['symbol'].isin(indices)][['token', 'symbol', 'exch_seg']]
+print(filtered)
