@@ -112,3 +112,61 @@ if bot_token and chat_id:
     )
 
 print("✅ Strategy run completed.")
+
+# --- 5. Fetch LTPs ---
+summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
+telegram_msg = "✅ ATM Options Algo Run\n"
+
+for idx in indices:
+    try:
+        # Spot LTP
+        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
+        # ✅ सुरक्षा जांच जोड़ें
+        if not ltp_data or "data" not in ltp_data or "ltp" not in ltp_data["data"]:
+            raise Exception("Failed to fetch spot LTP data.")
+        spot = ltp_data["data"]["ltp"]
+
+        # ATM Strike
+        strike = round(spot / idx["step"]) * idx["step"]
+
+        # Option symbols
+        ce_symbol = f"{idx['symbol']}{expiry}{strike}CE"
+        pe_symbol = f"{idx['symbol']}{expiry}{strike}PE"
+
+        # CE LTP
+        ce_data = smart_api.ltpData("NFO", "OPTIDX", ce_symbol)
+        # ✅ सुरक्षा जांच जोड़ें
+        if not ce_data or "data" not in ce_data or "ltp" not in ce_data["data"]:
+            raise Exception(f"Failed to fetch CE LTP for {ce_symbol}")
+        ce_ltp = ce_data["data"]["ltp"]
+
+        # PE LTP
+        pe_data = smart_api.ltpData("NFO", "OPTIDX", pe_symbol)
+        # ✅ सुरक्षा जांच जोड़ें
+        if not pe_data or "data" not in pe_data or "ltp" not in pe_data["data"]:
+            raise Exception(f"Failed to fetch PE LTP for {pe_symbol}")
+        pe_ltp = pe_data["data"]["ltp"]
+
+        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
+        telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
+
+        # --- Daily Log Tab ---
+        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
+        try:
+            ws = spreadsheet.worksheet(tab_name)
+        except:
+            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
+            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
+
+        ws.append_row([
+            datetime.now().strftime("%H:%M:%S"),
+            spot,
+            strike,
+            ce_ltp,
+            pe_ltp
+        ])
+
+    except Exception as e:
+        # अब यह यहाँ अलग-अलग एरर दिखाएगा
+        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
+        telegram_msg += f"\n{idx['name']} Error: {e}"
