@@ -19,8 +19,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-         python -m pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install pandas numpy pyotp gspread oauth2client requests smartapi-python logzero websocket-client
+
       - name: Run Algo Bot
         env:
           GSHEET_CREDS_JSON: ${{ secrets.GSHEET_CREDS_JSON }}
@@ -33,4 +34,3 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
-
