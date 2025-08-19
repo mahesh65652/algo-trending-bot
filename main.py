@@ -293,3 +293,60 @@ if bot_token and chat_id:
     )
 
 print("✅ Strategy run completed.")
+
+# Other imports at the top
+import requests
+import json
+# ... your other imports
+
+def get_symbol_token(exchange, trading_symbol):
+    """
+    यह फंक्शन सिंबल मास्टर फाइल डाउनलोड करता है और दिए गए ट्रेडिंग सिंबल
+    के लिए सिंबल टोकन ढूंढता है।
+    """
+    try:
+        # Step 1: Download the master file
+        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+        response = requests.get(url)
+
+        # Check if the download was successful
+        if response.status_code == 200:
+            data = json.loads(response.text)
+
+            # Step 2: Search for the symbol in the data
+            for item in data:
+                if item.get('exch_seg') == exchange and item.get('symbol') == trading_symbol:
+                    return item.get('token')
+
+            # If the symbol is not found
+            print(f"Error: Symbol '{trading_symbol}' not found on exchange '{exchange}'")
+            return None
+        else:
+            print(f"Error: Failed to download master file. Status code: {response.status_code}")
+            return None
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+
+#--- Rest of your main.py code ---
+
+# Now, instead of hardcoding the symboltoken, use the new function
+# For example, to get Nifty index token
+nifty_token = get_symbol_token('NSE', 'NIFTY')
+print(f"Nifty Token: {nifty_token}")
+
+# To get the specific option token, use its full name
+nifty_option_token = get_symbol_token('NFO', 'NIFTY21AUG2524950CE')
+print(f"Nifty Option Token: {nifty_option_token}")
+
+# Now you can use these tokens in your API calls
+# For example, your smartConnect.getLtpData() call would look like this:
+ltp_data = smartConnect.getLtpData(
+    exchange='NFO',
+    tradingsymbol='OPTIDX',
+    symboltoken=nifty_option_token
+)
+
+# ... and so on for your other symbols
