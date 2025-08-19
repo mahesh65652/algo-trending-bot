@@ -99,8 +99,7 @@ for idx in indices:
 
 # --- 6. Update Google Sheet (Summary Tab) ---
 summary_ws = spreadsheet.sheet1
-summary_ws.clear()
-summary_ws.update("A1", summary_rows)
+summary_ws.update(range_name="A1", values=summary_rows)
 
 # --- 7. Telegram Alert ---
 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
