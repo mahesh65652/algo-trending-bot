@@ -8,6 +8,32 @@ from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 from SmartApi import SmartConnect
 
+# --- Function to get symbol token from master file ---
+def get_symbol_token(exchange, trading_symbol):
+    """
+    Downloads the symbol master file and finds the symbol token for a given trading symbol.
+    """
+    try:
+        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code == 200:
+            data = json.loads(response.text)
+            for item in data:
+                if item.get('exch_seg') == exchange and item.get('symbol') == trading_symbol:
+                    return item.get('token')
+            print(f"Error: Symbol '{trading_symbol}' not found on exchange '{exchange}'")
+            return None
+        else:
+            print(f"Error: Failed to download master file. Status code: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Network error occurred while fetching symbol master file: {e}")
+        return None
+    except Exception as e:
+        print(f"An error occurred in get_symbol_token: {e}")
+        return None
+
 # --- 1. Google Sheet Connect ---
 try:
     creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
@@ -23,10 +49,11 @@ print("✅ Google Sheet connected successfully.")
 # --- 2. Angel One API Connect ---
 api_key     = os.environ.get("ANGEL_API_KEY")
 client_code = os.environ.get("CLIENT_CODE")
-pwd         = os.environ.get("PASSWORD")
+pwd         = os.environ.get("PWD")  # Changed to PWD as per your correction
 totp_key    = os.environ.get("TOTP")
 
 if not all([api_key, client_code, pwd, totp_key]):
+    # ये एरर तभी आएगा जब कोई भी क्रेडेंशियल सचमुच गायब हो
     raise Exception("❌ ERROR: Missing Angel One credentials in GitHub Secrets")
 
 smart_api = SmartConnect(api_key)
@@ -34,47 +61,70 @@ totp = pyotp.TOTP(totp_key).now()
 data = smart_api.generateSession(client_code, pwd, totp)
 
 if not data.get("status"):
-    raise Exception(f"Login failed: {data}")
+    raise Exception(f"Login failed: {data.get('message', 'Unknown error')}")
 print("✅ Angel One login successful.")
 
-# --- 3. Index tokens ---
+# --- 3. Index data ---
 indices = [
-    {"name": "NIFTY", "token": "99926000", "symbol": "NIFTY", "step": 50},
-    {"name": "BANKNIFTY", "token": "99926009", "symbol": "BANKNIFTY", "step": 100},
-    {"name": "FINNIFTY", "token": "99926037", "symbol": "FINNIFTY", "step": 50},
-    {"name": "MIDCPNIFTY", "token": "99926064", "symbol": "MIDCPNIFTY", "step": 100},
-    {"name": "SENSEX", "token": "99919000", "symbol": "SENSEX", "step": 100},
+    {"name": "NIFTY", "symbol": "NIFTY", "exchange": "NSE", "step": 50},
+    {"name": "BANKNIFTY", "symbol": "BANKNIFTY", "exchange": "NSE", "step": 100},
+    {"name": "FINNIFTY", "symbol": "FINNIFTY", "exchange": "NSE", "step": 50},
+    {"name": "MIDCPNIFTY", "symbol": "MIDCPNIFTY", "exchange": "NSE", "step": 100},
+    {"name": "SENSEX", "symbol": "SENSEX", "exchange": "BSE", "step": 100},
 ]
 
 # --- 4. Expiry Date (Nearest Thursday) ---
 today = datetime.now()
-days_ahead = (3 - today.weekday()) % 7  # Thursday = 3
+days_ahead = (3 - today.weekday()) % 7
 if days_ahead == 0:
     days_ahead = 7
-expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()  # e.g. 21AUG24
+expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()
 
-# --- 5. Fetch LTPs ---
+# --- 5. Fetch LTPs and Update Sheets ---
 summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
 telegram_msg = "✅ ATM Options Algo Run\n"
 
 for idx in indices:
     try:
-        # Spot LTP
-        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
+        # --- Spot LTP ---
+        # Get token from master file
+        idx_token = get_symbol_token(idx["exchange"], idx["symbol"])
+        if not idx_token:
+            raise Exception("Index token not found.")
+        
+        ltp_data = smart_api.ltpData(idx["exchange"], "INDICES", idx_token)
+        if not ltp_data or "data" not in ltp_data or "ltp" not in ltp_data["data"]:
+            raise Exception("Failed to fetch Spot LTP.")
         spot = ltp_data["data"]["ltp"]
 
-        # ATM Strike
+        # --- ATM Strike ---
         strike = round(spot / idx["step"]) * idx["step"]
 
-        # Option symbols
-        ce_symbol = f"{idx['symbol']}{expiry}{strike}CE"
-        pe_symbol = f"{idx['symbol']}{expiry}{strike}PE"
+        # --- Option Symbols ---
+        ce_trading_symbol = f"{idx['symbol']}{expiry}{strike}CE"
+        pe_trading_symbol = f"{idx['symbol']}{expiry}{strike}PE"
+        
+        # --- Get Option Tokens ---
+        ce_token = get_symbol_token("NFO", ce_trading_symbol)
+        pe_token = get_symbol_token("NFO", pe_trading_symbol)
+        
+        if not ce_token or not pe_token:
+            raise Exception("Option tokens not found for current expiry.")
 
-        ce_ltp = smart_api.ltpData("NFO", "OPTIDX", ce_symbol)["data"]["ltp"]
-        pe_ltp = smart_api.ltpData("NFO", "OPTIDX", pe_symbol)["data"]["ltp"]
+        # --- CE LTP ---
+        ce_data = smart_api.ltpData("NFO", "OPTIDX", ce_token)
+        if not ce_data or "data" not in ce_data or "ltp" not in ce_data["data"]:
+            raise Exception(f"Failed to fetch CE LTP for {ce_trading_symbol}")
+        ce_ltp = ce_data["data"]["ltp"]
 
+        # --- PE LTP ---
+        pe_data = smart_api.ltpData("NFO", "OPTIDX", pe_token)
+        if not pe_data or "data" not in pe_data or "ltp" not in pe_data["data"]:
+            raise Exception(f"Failed to fetch PE LTP for {pe_trading_symbol}")
+        pe_ltp = pe_data["data"]["ltp"]
+
+        # ✅ Add to Summary and Telegram
         summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
-
         telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
 
         # --- Daily Log Tab ---
@@ -84,7 +134,7 @@ for idx in indices:
         except:
             ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
             ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
-
+        
         ws.append_row([
             datetime.now().strftime("%H:%M:%S"),
             spot,
@@ -99,7 +149,7 @@ for idx in indices:
 
 # --- 6. Update Google Sheet (Summary Tab) ---
 summary_ws = spreadsheet.sheet1
-summary_ws.update(range_name="A1", values=summary_rows)
+summary_ws.update("A1", summary_rows)
 
 # --- 7. Telegram Alert ---
 bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -111,242 +161,3 @@ if bot_token and chat_id:
     )
 
 print("✅ Strategy run completed.")
-
-# --- 5. Fetch LTPs ---
-summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
-telegram_msg = "✅ ATM Options Algo Run\n"
-
-for idx in indices:
-    try:
-        # Spot LTP
-        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
-        # ✅ सुरक्षा जांच जोड़ें
-        if not ltp_data or "data" not in ltp_data or "ltp" not in ltp_data["data"]:
-            raise Exception("Failed to fetch spot LTP data.")
-        spot = ltp_data["data"]["ltp"]
-
-        # ATM Strike
-        strike = round(spot / idx["step"]) * idx["step"]
-
-        # Option symbols
-        ce_symbol = f"{idx['symbol']}{expiry}{strike}CE"
-        pe_symbol = f"{idx['symbol']}{expiry}{strike}PE"
-
-        # CE LTP
-        ce_data = smart_api.ltpData("NFO", "OPTIDX", ce_symbol)
-        # ✅ सुरक्षा जांच जोड़ें
-        if not ce_data or "data" not in ce_data or "ltp" not in ce_data["data"]:
-            raise Exception(f"Failed to fetch CE LTP for {ce_symbol}")
-        ce_ltp = ce_data["data"]["ltp"]
-
-        # PE LTP
-        pe_data = smart_api.ltpData("NFO", "OPTIDX", pe_symbol)
-        # ✅ सुरक्षा जांच जोड़ें
-        if not pe_data or "data" not in pe_data or "ltp" not in pe_data["data"]:
-            raise Exception(f"Failed to fetch PE LTP for {pe_symbol}")
-        pe_ltp = pe_data["data"]["ltp"]
-
-        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
-        telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
-
-        # --- Daily Log Tab ---
-        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
-        try:
-            ws = spreadsheet.worksheet(tab_name)
-        except:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
-            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
-
-        ws.append_row([
-            datetime.now().strftime("%H:%M:%S"),
-            spot,
-            strike,
-            ce_ltp,
-            pe_ltp
-        ])
-
-    except Exception as e:
-        # अब यह यहाँ अलग-अलग एरर दिखाएगा
-        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
-        telegram_msg += f"\n{idx['name']} Error: {e}"
-import os
-import json
-import requests
-import gspread
-import pyotp
-from datetime import datetime, timedelta
-from oauth2client.service_account import ServiceAccountCredentials
-from SmartApi import SmartConnect
-
-# --- 1. Google Sheet Connect ---
-try:
-    creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
-except Exception as e:
-    raise Exception(f"❌ GSHEET_CREDS_JSON invalid: {e}")
-
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-spreadsheet = client.open_by_key(os.environ["GSHEET_ID"])
-print("✅ Google Sheet connected successfully.")
-
-# --- 2. Angel One API Connect ---
-api_key     = os.environ.get("ANGEL_API_KEY")
-client_code = os.environ.get("ANGEL_CLIENT_CODE")
-pwd         = os.environ.get("ANGEL_CLIENT_PWD")
-totp_key    = os.environ.get("ANGEL_TOTP_SECRET")
-
-if not all([api_key, client_code, pwd, totp_key]):
-    raise Exception("❌ ERROR: Missing Angel One credentials in GitHub Secrets")
-
-smart_api = SmartConnect(api_key)
-totp = pyotp.TOTP(totp_key).now()
-data = smart_api.generateSession(client_code, pwd, totp)
-
-if not data.get("status"):
-    raise Exception(f"Login failed: {data}")
-print("✅ Angel One login successful.")
-
-# --- 3. Index tokens ---
-indices = [
-    {"name": "NIFTY", "token": "99926000", "symbol": "NIFTY", "step": 50},
-    {"name": "BANKNIFTY", "token": "99926009", "symbol": "BANKNIFTY", "step": 100},
-    {"name": "FINNIFTY", "token": "99926037", "symbol": "FINNIFTY", "step": 50},
-    {"name": "MIDCPNIFTY", "token": "99926064", "symbol": "MIDCPNIFTY", "step": 100},
-    {"name": "SENSEX", "token": "99919000", "symbol": "SENSEX", "step": 100},
-]
-
-# --- 4. Expiry Date (Nearest Thursday) ---
-today = datetime.now()
-days_ahead = (3 - today.weekday()) % 7  # Thursday = 3
-if days_ahead == 0:
-    days_ahead = 7
-expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()
-
-# --- 5. Fetch LTPs ---
-summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
-telegram_msg = "✅ ATM Options Algo Run\n"
-
-for idx in indices:
-    try:
-        # --- Spot LTP ---
-        ltp_data = smart_api.ltpData("NSE", "INDICES", idx["token"])
-        if not ltp_data or "data" not in ltp_data or "ltp" not in ltp_data["data"]:
-            raise Exception("Failed to fetch Spot LTP")
-        spot = ltp_data["data"]["ltp"]
-
-        # --- ATM Strike ---
-        strike = round(spot / idx["step"]) * idx["step"]
-
-        # --- Option symbols ---
-        ce_symbol = f"{idx['symbol']}{expiry}{strike}CE"
-        pe_symbol = f"{idx['symbol']}{expiry}{strike}PE"
-
-        # --- CE LTP ---
-        ce_data = smart_api.ltpData("NFO", "OPTIDX", ce_symbol)
-        if not ce_data or "data" not in ce_data or "ltp" not in ce_data["data"]:
-            raise Exception(f"Failed to fetch CE LTP ({ce_symbol})")
-        ce_ltp = ce_data["data"]["ltp"]
-
-        # --- PE LTP ---
-        pe_data = smart_api.ltpData("NFO", "OPTIDX", pe_symbol)
-        if not pe_data or "data" not in pe_data or "ltp" not in pe_data["data"]:
-            raise Exception(f"Failed to fetch PE LTP ({pe_symbol})")
-        pe_ltp = pe_data["data"]["ltp"]
-
-        # ✅ Add to Summary
-        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
-        telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
-
-        # ✅ Daily Log Tab
-        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
-        try:
-            ws = spreadsheet.worksheet(tab_name)
-        except:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
-            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
-
-        ws.append_row([
-            datetime.now().strftime("%H:%M:%S"),
-            spot,
-            strike,
-            ce_ltp,
-            pe_ltp
-        ])
-
-    except Exception as e:
-        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
-        telegram_msg += f"\n{idx['name']} Error: {e}"
-
-# --- 6. Update Google Sheet (Summary Tab) ---
-summary_ws = spreadsheet.sheet1
-summary_ws.clear()
-summary_ws.update("A1", summary_rows)
-
-# --- 7. Telegram Alert ---
-bot_token = os.environ.get("TELEGRAM_TOKEN")
-chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-if bot_token and chat_id:
-    requests.post(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        data={"chat_id": chat_id, "text": telegram_msg}
-    )
-
-print("✅ Strategy run completed.")
-
-# Other imports at the top
-import requests
-import json
-# ... your other imports
-
-def get_symbol_token(exchange, trading_symbol):
-    """
-    यह फंक्शन सिंबल मास्टर फाइल डाउनलोड करता है और दिए गए ट्रेडिंग सिंबल
-    के लिए सिंबल टोकन ढूंढता है।
-    """
-    try:
-        # Step 1: Download the master file
-        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url)
-
-        # Check if the download was successful
-        if response.status_code == 200:
-            data = json.loads(response.text)
-
-            # Step 2: Search for the symbol in the data
-            for item in data:
-                if item.get('exch_seg') == exchange and item.get('symbol') == trading_symbol:
-                    return item.get('token')
-
-            # If the symbol is not found
-            print(f"Error: Symbol '{trading_symbol}' not found on exchange '{exchange}'")
-            return None
-        else:
-            print(f"Error: Failed to download master file. Status code: {response.status_code}")
-            return None
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return None
-
-
-#--- Rest of your main.py code ---
-
-# Now, instead of hardcoding the symboltoken, use the new function
-# For example, to get Nifty index token
-nifty_token = get_symbol_token('NSE', 'NIFTY')
-print(f"Nifty Token: {nifty_token}")
-
-# To get the specific option token, use its full name
-nifty_option_token = get_symbol_token('NFO', 'NIFTY21AUG2524950CE')
-print(f"Nifty Option Token: {nifty_option_token}")
-
-# Now you can use these tokens in your API calls
-# For example, your smartConnect.getLtpData() call would look like this:
-ltp_data = smartConnect.getLtpData(
-    exchange='NFO',
-    tradingsymbol='OPTIDX',
-    symboltoken=nifty_option_token
-)
-
-# ... and so on for your other symbols
