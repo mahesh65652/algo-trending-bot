@@ -1,16 +1,3 @@
-# main.py
-"""
-Unified algo bot:
-- Google Sheets connect (service account JSON in env GSHEET_CREDS_JSON)
-- Angel One (SmartAPI) login using secrets
-- Download instrument master to map symbol -> token
-- Compute simple indicators (SMA14, RSI14, MACD) from sheet Close column
-- Generate simple index/options signals
-- Open trades into TRADE_LOG sheet with SL (3%) and TP (10%)
-- Manage existing open trades (auto close on SL/TP) and update sheet
-- Send Telegram alerts
-"""
-
 import os
 import json
 import time
