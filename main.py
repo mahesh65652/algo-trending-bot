@@ -1,353 +1,553 @@
-import os
-import json
-import requests
-import gspread
-import pyotp
-import pandas as pd
-from datetime import datetime, timedelta
-from oauth2client.service_account import ServiceAccountCredentials
-from SmartApi import SmartConnect
-from gspread.exceptions import APIError, WorksheetNotFound
-
-# --- Function to get symbol token from master file ---
-def get_symbol_token(exchange, trading_symbol):
-    """
-    Downloads the symbol master file and finds the symbol token for a given trading symbol.
-    """
-    try:
-        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url, timeout=30)
-        
-        if response.status_code == 200:
-            data = json.loads(response.text)
-            for item in data:
-                if item.get('exch_seg') == exchange and item.get('symbol') == trading_symbol:
-                    return item.get('token')
-            print(f"Error: Symbol '{trading_symbol}' not found on exchange '{exchange}'")
-            return None
-        else:
-            print(f"Error: Failed to download master file. Status code: {response.status_code}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Network error occurred while fetching symbol master file: {e}")
-        return None
-    except Exception as e:
-        print(f"An error occurred in get_symbol_token: {e}")
-        return None
-
-# --- 1. Google Sheet Connect ---
-try:
-    creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
-except Exception as e:
-    raise Exception(f"❌ GSHEET_CREDS_JSON invalid: {e}")
-
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-
-# Retry logic for 503 errors
-for attempt in range(5):
-    try:
-        spreadsheet = client.open_by_key(os.environ["GSHEET_ID"])
-        print("✅ Google Sheet connected successfully.")
-        break
-    except APIError as e:
-        if "503" in str(e):
-            wait_time = 5 * (attempt + 1)
-            print(f"⚠ Google Sheets API 503 error, retrying in {wait_time} sec...")
-            time.sleep(wait_time)
-        else:
-            raise
-else:
-    raise Exception("❌ Failed to connect to Google Sheets after retries.")
-
-# --- 2. Angel One API Connect ---
-api_key     = os.environ.get("ANGEL_API_KEY")
-client_code = os.environ.get("ANGEL_CLIENT_CODE")
-pwd         = os.environ.get("ANGEL_CLIENT_PWD")
-totp_key    = os.environ.get("ANGEL_TOTP_SECRET")
-
-if not all([api_key, client_code, pwd, totp_key]):
-    raise Exception("❌ ERROR: Missing Angel One credentials in GitHub Secrets")
-
-smart_api = SmartConnect(api_key)
-try:
-    totp = pyotp.TOTP(totp_key).now()
-    print(f"🔑 Generated OTP: {totp}")
-    data = smart_api.generateSession(client_code, pwd, totp)
-    if not data.get("status"):
-        raise Exception(f"Login failed: {data.get('message', 'Unknown error')}")
-    print("✅ Angel One login successful.")
-except Exception as e:
-    raise Exception(f"❌ Angel One login failed: {e}")
-
-# --- 3. Index data ---
-indices = [
-    {"name": "NIFTY", "symbol": "NIFTY", "exchange": "NSE", "step": 50},
-    {"name": "BANKNIFTY", "symbol": "BANKNIFTY", "exchange": "NSE", "step": 100},
-    {"name": "FINNIFTY", "symbol": "FINNIFTY", "exchange": "NSE", "step": 50},
-    {"name": "MIDCPNIFTY", "symbol": "MIDCPNIFTY", "exchange": "NSE", "step": 100},
-    {"name": "SENSEX", "symbol": "SENSEX", "exchange": "BSE", "step": 100},
-]
-
-# --- 4. Expiry Date (Nearest Thursday) ---
-today = datetime.now()
-days_ahead = (3 - today.weekday()) % 7
-if days_ahead == 0:
-    days_ahead = 7
-expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()
-
-# --- 5. Fetch LTPs and Update Sheets ---
-summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
-telegram_msg = "✅ ATM Options Algo Run\n"
-
-for idx in indices:
-    try:
-        # --- Spot LTP ---
-        idx_token = get_symbol_token(idx["exchange"], idx["symbol"])
-        if not idx_token:
-            print(f"❌ Skipping {idx['name']}: Index token not found.")
-            continue
-        
-        ltp_data = smart_api.ltpData(idx["exchange"], idx["symbol"], idx_token)
-        if not ltp_data or "data" not in ltp_data or "ltp" not in ltp_data["data"]:
-            raise Exception("Failed to fetch Spot LTP.")
-        spot = ltp_data["data"]["ltp"]
-
-        # --- ATM Strike ---
-        strike = round(spot / idx["step"]) * idx["step"]
-
-        # --- Option Symbols ---
-        ce_trading_symbol = f"{idx['symbol']}{expiry}{strike}CE"
-        pe_trading_symbol = f"{idx['symbol']}{expiry}{strike}PE"
-        
-        # --- Get Option Tokens ---
-        ce_token = get_symbol_token("NFO", ce_trading_symbol)
-        pe_token = get_symbol_token("NFO", pe_trading_symbol)
-        
-        if not ce_token or not pe_token:
-            print(f"❌ Skipping {idx['name']}: Option tokens not found. Check symbol names or expiry date.")
-            continue
-
-        # --- CE LTP ---
-        ce_data = smart_api.ltpData("NFO", ce_trading_symbol, ce_token)
-        if not ce_data or "data" not in ce_data or "ltp" not in ce_data["data"]:
-            raise Exception(f"Failed to fetch CE LTP for {ce_trading_symbol}")
-        ce_ltp = ce_data["data"]["ltp"]
-
-        # --- PE LTP ---
-        pe_data = smart_api.ltpData("NFO", pe_trading_symbol, pe_token)
-        if not pe_data or "data" not in pe_data or "ltp" not in pe_data["data"]:
-            raise Exception(f"Failed to fetch PE LTP for {pe_trading_symbol}")
-        pe_ltp = pe_data["data"]["ltp"]
-
-        # ✅ Add to Summary and Telegram
-        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
-        telegram_msg += f"\n{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}"
-
-        # --- Daily Log Tab ---
-        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
-        try:
-            ws = spreadsheet.worksheet(tab_name)
-        except WorksheetNotFound:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
-            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
-        
-        ws.append_row([
-            datetime.now().strftime("%H:%M:%S"),
-            spot,
-            strike,
-            ce_ltp,
-            pe_ltp
-        ])
-        print(f"📊 Added row for {idx['name']} to {tab_name} sheet.")
-
-    except Exception as e:
-        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
-        telegram_msg += f"\n{idx['name']} Error: {e}"
-        print(f"❌ Error processing {idx['name']}: {e}")
-
-# --- 6. Update Google Sheet (Summary Tab) ---
-summary_ws = spreadsheet.sheet1
-summary_ws.update("A1:E" + str(len(summary_rows)), summary_rows)
-print("📊 Summary sheet updated.")
-
-# --- 7. Telegram Alert ---
-bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-if bot_token and chat_id:
-    requests.post(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        data={"chat_id": chat_id, "text": telegram_msg}
-    )
-    print("📨 Telegram alert sent.")
-
-print("✅ Strategy run completed.")
-
+# main.py
+"""
+Unified algo bot:
+- Google Sheets connect (service account JSON in env GSHEET_CREDS_JSON)
+- Angel One (SmartAPI) login using secrets
+- Download instrument master to map symbol -> token
+- Compute simple indicators (SMA14, RSI14, MACD) from sheet Close column
+- Generate simple index/options signals
+- Open trades into TRADE_LOG sheet with SL (3%) and TP (10%)
+- Manage existing open trades (auto close on SL/TP) and update sheet
+- Send Telegram alerts
+"""
 
 import os
 import json
-import requests
-import gspread
-import pyotp
-import pandas as pd
 import time
+import math
 from datetime import datetime, timedelta
-from oauth2client.service_account import ServiceAccountCredentials
-from SmartApi import SmartConnect
-from gspread.exceptions import APIError, WorksheetNotFound
 
-# --- Stable ATM Helper ---
-last_strike_map = {}
+import requests
+import pandas as pd
+import pyotp
 
-def stable_atm_strike(spot, step, key):
-    k = int(spot // step)
-    lower = k * step
-    upper = (k + 1) * step
-    atm = lower if (spot - lower) < (upper - spot) else upper
-    prev = last_strike_map.get(key)
-    if prev:
-        boundary = (lower + upper) / 2
-        if abs(spot - boundary) <= step * 0.02:  # 2% cushion
-            atm = prev
-    last_strike_map[key] = atm
-    return atm
-
-# --- Function to get symbol token from master file ---
-def get_symbol_token(exchange, trading_symbol):
+# try import SmartConnect from both common package names
+try:
+    from SmartApi import SmartConnect  # some packages
+except Exception:
     try:
-        url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            data = json.loads(response.text)
-            for item in data:
-                if item.get('exch_seg') == exchange and item.get('symbol') == trading_symbol:
-                    return item.get('token')
-            return None
-        else:
-            print(f"Error downloading master file. Status code: {response.status_code}")
-            return None
+        from smartapi import SmartConnect
+    except Exception:
+        SmartConnect = None  # will error later if missing
+
+# gspread/oauth helper
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    from gspread.exceptions import APIError, WorksheetNotFound
+except Exception:
+    gspread = None
+
+# ---------- CONFIG (env names) ----------
+GSHEET_CREDS_ENV = "GSHEET_CREDS_JSON"  # full JSON service account
+GSHEET_ID_ENV = "GSHEET_ID"
+ANGEL_API_KEY_ENV = "ANGEL_API_KEY"
+ANGEL_CLIENT_CODE_ENV = "ANGEL_CLIENT_CODE"
+ANGEL_CLIENT_PWD_ENV = "ANGEL_CLIENT_PWD"
+ANGEL_TOTP_SECRET_ENV = "ANGEL_TOTP_SECRET"
+TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ENV = "TELEGRAM_CHAT_ID"
+
+# master instruments URL (Angel)
+MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+
+# ---------- Helpers: Telegram ----------
+def send_telegram_message(text: str):
+    token = os.getenv(TELEGRAM_TOKEN_ENV)
+    chat_id = os.getenv(TELEGRAM_CHAT_ENV)
+    if not token or not chat_id:
+        print("⚠️ Telegram credentials missing; skipping send.")
+        return
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": text},
+            timeout=6,
+        )
+        if resp.status_code != 200:
+            print("⚠ Telegram API returned", resp.status_code, resp.text)
     except Exception as e:
-        print(f"get_symbol_token error: {e}")
+        print("⚠ Telegram send error:", e)
+
+# ---------- Google Sheets helpers ----------
+def gs_auth_from_env():
+    if gspread is None:
+        raise Exception("gspread or oauth2client not installed.")
+    raw = os.getenv(GSHEET_CREDS_ENV)
+    if not raw:
+        raise Exception(f"{GSHEET_CREDS_ENV} missing in env")
+    try:
+        creds_dict = json.loads(raw)
+    except Exception as e:
+        raise Exception(f"GSHEET_CREDS_JSON invalid JSON: {e}")
+
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client
+
+def open_sheet(client, sheet_id):
+    for attempt in range(4):
+        try:
+            ss = client.open_by_key(sheet_id)
+            return ss
+        except APIError as e:
+            print("Google Sheets APIError:", e)
+            time.sleep(2 + attempt * 2)
+    raise Exception("Failed to open Google Sheet.")
+
+def read_sheet_values(ss, sheet_name):
+    try:
+        ws = ss.worksheet(sheet_name)
+        return ws.get_all_values()
+    except WorksheetNotFound:
+        raise
+    except Exception as e:
+        print("Error reading sheet:", e)
+        return []
+
+def ensure_trade_log_sheet(ss, name="TRADE_LOG"):
+    try:
+        ws = ss.worksheet(name)
+    except WorksheetNotFound:
+        ws = ss.add_worksheet(title=name, rows="1000", cols="20")
+        headers = ["id", "symbol", "side", "entry_price", "sl", "tp", "status", "open_time", "close_time", "close_price", "notes"]
+        ws.append_row(headers)
+    return ss.worksheet(name)
+
+# helper update trade log rows - we will use append for open trades and update on close
+def append_trade_log(ws, row_values):
+    ws.append_row(row_values)
+
+def find_open_trades(ws):
+    records = ws.get_all_records()
+    open_rows = []
+    for idx, r in enumerate(records, start=2):  # sheet rows start at 2 (1 is header)
+        if str(r.get("status", "")).upper() == "OPEN":
+            open_rows.append((idx, r))
+    return open_rows
+
+def update_trade_row(ws, row_index, updated_values: dict):
+    # read current row, then update cells via update
+    # updated_values keys should be column names
+    headers = ws.row_values(1)
+    values = ws.row_values(row_index)
+    # extend values to headers length
+    while len(values) < len(headers):
+        values.append("")
+    for col_name, val in updated_values.items():
+        if col_name in headers:
+            col_idx = headers.index(col_name) + 1
+            ws.update_cell(row_index, col_idx, val)
+
+# ---------- Instruments master helpers ----------
+def download_master_json():
+    try:
+        r = requests.get(MASTER_URL, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print("❌ Failed to download master JSON:", e)
         return None
 
-# --- 1. Google Sheet Connect ---
-try:
-    creds_dict = json.loads(os.environ["GSHEET_CREDS_JSON"])
-except Exception as e:
-    raise Exception(f"❌ GSHEET_CREDS_JSON invalid: {e}")
+def build_token_map(master_json):
+    # returns dict keyed by (exch_seg, symbol) => token
+    m = {}
+    for item in master_json:
+        exch = item.get("exch_seg")
+        sym = item.get("symbol")
+        token = item.get("token")
+        if exch and sym and token:
+            m[(exch.upper(), sym.upper())] = token
+    return m
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
+def lookup_token(token_map, exch, trading_symbol):
+    return token_map.get((exch.upper(), trading_symbol.upper()))
 
-for attempt in range(5):
-    try:
-        spreadsheet = client.open_by_key(os.environ["GSHEET_ID"])
-        print("✅ Google Sheet connected successfully.")
-        break
-    except APIError as e:
-        if "503" in str(e):
-            wait_time = 5 * (attempt + 1)
-            print(f"⚠ Google Sheets API 503, retrying in {wait_time} sec...")
-            time.sleep(wait_time)
-        else:
-            raise
-else:
-    raise Exception("❌ Failed to connect Google Sheets after retries.")
+# ---------- Indicators (simple) ----------
+def ensure_numeric_series(series):
+    return pd.to_numeric(series, errors="coerce")
 
-# --- 2. Angel One API Connect ---
-api_key     = os.environ.get("ANGEL_API_KEY")
-client_code = os.environ.get("ANGEL_CLIENT_CODE")
-pwd         = os.environ.get("ANGEL_CLIENT_PWD")
-totp_key    = os.environ.get("ANGEL_TOTP_SECRET")
+def calculate_basic_indicators_from_values(values_table):
+    """
+    values_table: list of lists from sheet; first row headers
+    returns DataFrame with added SMA_14, RSI_14, MACD, SIGNAL
+    Expect header name 'Close' (case-sensitive). We'll normalize headers.
+    """
+    if not values_table or len(values_table) < 2:
+        return pd.DataFrame()
 
-if not all([api_key, client_code, pwd, totp_key]):
-    raise Exception("❌ Missing Angel One credentials")
+    headers = [h.strip() for h in values_table[0]]
+    df = pd.DataFrame(values_table[1:], columns=headers)
+    # normalize columns to standard names
+    rename_map = {}
+    for c in df.columns:
+        if c.lower() == "close":
+            rename_map[c] = "Close"
+        elif c.lower() == "open":
+            rename_map[c] = "Open"
+        elif c.lower() == "high":
+            rename_map[c] = "High"
+        elif c.lower() == "low":
+            rename_map[c] = "Low"
+        elif c.lower() in ("symbol", "symbolname", "name"):
+            rename_map[c] = "Symbol"
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
-smart_api = SmartConnect(api_key)
-totp = pyotp.TOTP(totp_key).now()
-print(f"🔑 Generated OTP: {totp}")
-data = smart_api.generateSession(client_code, pwd, totp)
-if not data.get("status"):
-    raise Exception(f"Login failed: {data.get('message','Unknown error')}")
-print("✅ Angel One login successful.")
+    if "Close" not in df.columns:
+        print("⚠️ 'Close' column missing in sheet; indicators can't be computed.")
+        return pd.DataFrame()
 
-# --- 3. Index data ---
-indices = [
-    {"name": "NIFTY", "symbol": "NIFTY", "exchange": "NSE", "step": 50},
-    {"name": "BANKNIFTY", "symbol": "BANKNIFTY", "exchange": "NSE", "step": 100},
-    {"name": "FINNIFTY", "symbol": "FINNIFTY", "exchange": "NSE", "step": 50},
-    {"name": "MIDCPNIFTY", "symbol": "MIDCPNIFTY", "exchange": "NSE", "step": 100},
-    {"name": "SENSEX", "symbol": "SENSEX", "exchange": "BSE", "step": 100},
-]
+    # convert numeric columns
+    for col in ["Open", "High", "Low", "Close"]:
+        if col in df.columns:
+            df[col] = ensure_numeric_series(df[col])
 
-# --- 4. Expiry Date (Nearest Thursday) ---
-today = datetime.now()
-days_ahead = (3 - today.weekday()) % 7
-if days_ahead == 0:
-    days_ahead = 7
-expiry = (today + timedelta(days=days_ahead)).strftime("%d%b%y").upper()
+    # compute SMA14
+    df["SMA_14"] = df["Close"].rolling(window=14, min_periods=1).mean()
 
-# --- 5. Fetch LTPs + Update Sheets ---
-summary_rows = [["Index", "Spot LTP", "ATM Strike", "ATM CE", "ATM PE"]]
-lines = ["✅ ATM Options Algo Run"]
+    # compute RSI14
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14, min_periods=1).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+    rs = gain / loss.replace(0, pd.NA)
+    df["RSI_14"] = 100 - (100 / (1 + rs))
 
-for idx in indices:
-    try:
-        # Spot LTP
-        idx_token = get_symbol_token(idx["exchange"], idx["symbol"])
-        if not idx_token:
-            raise Exception("Index token not found")
-        spot = smart_api.ltpData(idx["exchange"], idx["symbol"], idx_token)["data"]["ltp"]
+    # MACD
+    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
+    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"] = exp1 - exp2
+    df["MACD_SIGNAL"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
-        # Stable ATM strike
-        strike = stable_atm_strike(spot, idx["step"], idx["name"])
+    return df
 
-        # Option Symbols
-        ce_trading_symbol = f"{idx['symbol']}{expiry}{strike}CE"
-        pe_trading_symbol = f"{idx['symbol']}{expiry}{strike}PE"
+# ---------- Simple signal generators ----------
+def generate_index_signals(df):
+    """
+    Simple rule: Close > SMA_14 -> BUY ; Close < SMA_14 -> SELL
+    Returns list of "BUY SYMBOL" strings
+    """
+    signals = []
+    if df.empty or "SMA_14" not in df.columns:
+        return signals
 
-        ce_token = get_symbol_token("NFO", ce_trading_symbol)
-        pe_token = get_symbol_token("NFO", pe_trading_symbol)
-        if not ce_token or not pe_token:
-            raise Exception("Option tokens not found")
+    # We assume df contains many rows including multiple symbols; we pick last occurrence of each symbol
+    if "Symbol" in df.columns:
+        grouped = df.groupby("Symbol")
+        for sym, g in grouped:
+            last = g.iloc[-1]
+            if pd.isna(last["Close"]) or pd.isna(last["SMA_14"]):
+                continue
+            if last["Close"] > last["SMA_14"]:
+                signals.append(f"BUY {sym}")
+            elif last["Close"] < last["SMA_14"]:
+                signals.append(f"SELL {sym}")
+    else:
+        # fallback: single instrument sheet
+        last = df.iloc[-1]
+        sym = last.get("Symbol", "SYMBOL")
+        if last["Close"] > last["SMA_14"]:
+            signals.append(f"BUY {sym}")
+        elif last["Close"] < last["SMA_14"]:
+            signals.append(f"SELL {sym}")
 
-        ce_ltp = smart_api.ltpData("NFO", ce_trading_symbol, ce_token)["data"]["ltp"]
-        pe_ltp = smart_api.ltpData("NFO", pe_trading_symbol, pe_token)["data"]["ltp"]
+    return signals
 
-        summary_rows.append([idx["name"], spot, strike, ce_ltp, pe_ltp])
-        lines.append(f"{idx['name']} Spot:{spot} Strike:{strike} CE:{ce_ltp} PE:{pe_ltp}")
+def generate_options_signals(df):
+    """
+    Very simple breakout on previous high/low for options (if sheet contains options history).
+    Returns list of "BUY SYMBOL" or "SELL SYMBOL"
+    """
+    signals = []
+    if df.empty:
+        return signals
+    if "Symbol" not in df.columns:
+        return signals
 
-        # Daily Log Tab
-        tab_name = f"{idx['name']}_{today.strftime('%Y-%m-%d')}"
+    grouped = df.groupby("Symbol")
+    for sym, g in grouped:
+        if len(g) < 2:
+            continue
+        last = g.iloc[-1]
+        prev = g.iloc[-2]
         try:
-            ws = spreadsheet.worksheet(tab_name)
-        except WorksheetNotFound:
-            ws = spreadsheet.add_worksheet(title=tab_name, rows="1000", cols="10")
-            ws.append_row(["Time", "Spot", "Strike", "CE", "PE"])
-        ws.append_row([datetime.now().strftime("%H:%M:%S"), spot, strike, ce_ltp, pe_ltp])
+            close = float(last["Close"])
+            prev_high = float(prev.get("High", math.nan))
+            prev_low = float(prev.get("Low", math.nan))
+        except Exception:
+            continue
+        if close > prev_high:
+            signals.append(f"BUY {sym}")
+        elif close < prev_low:
+            signals.append(f"SELL {sym}")
+    return signals
 
-        print(f"📊 Added {idx['name']} row to {tab_name}")
+# ---------- Trade open/manage helpers ----------
+def calculate_sl_tp(entry_price: float, side: str):
+    # SL 3% (advised), TP 10%
+    if side.upper() == "BUY":
+        sl = round(entry_price * (1 - 0.03), 4)
+        tp = round(entry_price * (1 + 0.10), 4)
+    else:
+        sl = round(entry_price * (1 + 0.03), 4)
+        tp = round(entry_price * (1 - 0.10), 4)
+    return sl, tp
 
+def open_trade_in_sheet(ws_trade, symbol, side, entry_price, notes=""):
+    entry_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    sl, tp = calculate_sl_tp(entry_price, side)
+    # id can be timestamp
+    tid = int(time.time())
+    row = [tid, symbol, side, entry_price, sl, tp, "OPEN", entry_time, "", "", notes]
+    append_trade_log(ws_trade, row)
+    send_telegram_message(f"✅ OPEN {side} {symbol} @ {entry_price} SL={sl} TP={tp}")
+
+def manage_open_trades_with_sheet(ws_trade, token_map, api_instance):
+    """
+    Read all OPEN trades from ws_trade, check current LTP (via smartapi), close if SL/TP hit.
+    Updates the sheet row status to CLOSED and writes close time and price.
+    """
+    records = ws_trade.get_all_records()
+    headers = ws_trade.row_values(1)
+    for idx, rec in enumerate(records, start=2):
+        status = str(rec.get("status", "")).upper()
+        if status != "OPEN":
+            continue
+        symbol = rec.get("symbol")
+        side = rec.get("side")
+        entry_price = rec.get("entry_price")
+        sl = rec.get("sl")
+        tp = rec.get("tp")
+        if not symbol:
+            continue
+        # find token: try NFO then NSE etc
+        token = None
+        # try common exchanges in priority
+        for exch in ("NFO", "NSE", "MCX", "BSE"):
+            token = lookup_token(token_map, exch, symbol)
+            if token:
+                exch_used = exch
+                break
+        if not token:
+            print(f"⚠ Token not found for open trade {symbol}; skipping price check.")
+            continue
+        # get LTP
+        try:
+            ltp_data = api_instance.ltpData(exch_used, symbol, token)
+            ltp = None
+            if ltp_data and isinstance(ltp_data, dict) and ltp_data.get("data"):
+                ltp = ltp_data["data"].get("ltp")
+            if not ltp:
+                print(f"⚠ No LTP for {symbol}")
+                continue
+            price = float(ltp)
+        except Exception as e:
+            print("⚠ Error fetching ltp for", symbol, e)
+            continue
+
+        closed_reason = None
+        if side.upper() == "BUY":
+            if price <= float(sl):
+                closed_reason = "SL"
+            elif price >= float(tp):
+                closed_reason = "TP"
+        else:  # SELL
+            if price >= float(sl):
+                closed_reason = "SL"
+            elif price <= float(tp):
+                closed_reason = "TP"
+
+        if closed_reason:
+            close_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            # update row
+            # update status, close_time, close_price, notes
+            updates = {
+                "status": "CLOSED",
+                "close_time": close_time,
+                "close_price": price,
+                "notes": f"Closed by {closed_reason}"
+            }
+            update_trade_row(ws_trade, idx, updates)
+            send_telegram_message(f"🔒 {symbol} {closed_reason} at {price} (entry {entry_price})")
+            print(f"Closed trade {symbol} reason {closed_reason} at {price}")
+
+# ---------- Main ----------
+def main():
+    # 1) validate env & modules
+    try:
+        client = gs_auth_from_env()
     except Exception as e:
-        summary_rows.append([idx["name"], f"Error: {e}", "-", "-", "-"])
-        lines.append(f"{idx['name']} Error: {e}")
-        print(f"❌ {idx['name']} error: {e}")
+        print("❌ Google Sheets auth error:", e)
+        return
 
-# --- 6. Update Summary Tab ---
-spreadsheet.sheet1.update("A1:E" + str(len(summary_rows)), summary_rows)
-print("📊 Summary updated.")
+    sheet_id = os.getenv(GSHEET_ID_ENV)
+    if not sheet_id:
+        print(f"❌ {GSHEET_ID_ENV} missing in env")
+        return
 
-# --- 7. Telegram Alert (single msg) ---
-bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-if bot_token and chat_id:
-    msg = "\n".join(lines)
-    requests.post(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        data={"chat_id": chat_id, "text": msg}
-    )
-    print("📨 Telegram alert sent.")
+    ss = open_sheet(client, sheet_id)
 
-print("✅ Strategy run completed.")
+    # ensure summary sheet exists (sheet1 used)
+    try:
+        summary_ws = ss.sheet1
+    except Exception:
+        summary_ws = ss.add_worksheet(title="Summary", rows="1000", cols="20")
+
+    # 2) SmartAPI login
+    api_key = os.getenv(ANGEL_API_KEY_ENV)
+    client_code = os.getenv(ANGEL_CLIENT_CODE_ENV)
+    pwd = os.getenv(ANGEL_CLIENT_PWD_ENV)
+    totp_secret = os.getenv(ANGEL_TOTP_SECRET_ENV)
+
+    if not SmartConnect:
+        print("❌ SmartConnect library missing. Install smartapi-python or SmartApi package.")
+        return
+    if not all([api_key, client_code, pwd, totp_secret]):
+        print("❌ Angel One credentials missing in env.")
+        return
+
+    api = SmartConnect(api_key)
+    try:
+        otp = pyotp.TOTP(totp_secret.strip()).now()
+        print("🔑 Generated OTP:", otp)
+        data = api.generateSession(client_code, pwd, otp)
+        if not data or not data.get("status"):
+            print("❌ Login failed:", data)
+            return
+        print("✅ Angel One login successful.")
+    except Exception as e:
+        print("❌ Angel login exception:", e)
+        return
+
+    # 3) download master and build token map
+    master = download_master_json()
+    if not master:
+        print("❌ Could not download master instruments; continuing without token map.")
+        token_map = {}
+    else:
+        token_map = build_token_map(master)
+
+    # 4) read LIVE DATA sheet (should be named LIVE DATA)
+    try:
+        values = read_sheet_values(ss, "LIVE DATA")
+    except WorksheetNotFound:
+        print("⚠ LIVE DATA sheet not found. Please create sheet named 'LIVE DATA' with data.")
+        return
+    except Exception as e:
+        print("Error reading LIVE DATA:", e)
+        return
+
+    df = calculate_basic_indicators_from_values(values)
+    if df.empty:
+        print("⚠ Indicators not computed; exiting.")
+        return
+
+    # 5) generate signals
+    index_signals = generate_index_signals(df)
+    options_signals = generate_options_signals(df)
+    all_signals = index_signals + options_signals
+
+    # write signals into Summary sheet cell J2 (or update A sheet as per user)
+    try:
+        # convert to one string per row for sheet
+        if all_signals:
+            # write into cell J2 downward
+            # for simplicity clear "Signals" range then write each in column J starting J2
+            summary_ws.update("J1", [["Signals"]])
+            summary_ws.update("J2", [[s] for s in all_signals])
+        else:
+            summary_ws.update("J1", [["Signals"]])
+            summary_ws.update("J2", [["(no signals)"]])
+    except Exception as e:
+        print("⚠ Could not update signals to sheet:", e)
+
+    # 6) open trades based on signals (simple: open one contract per signal)
+    ws_trade = ensure_trade_log_sheet(ss, "TRADE_LOG")
+    for sig in all_signals:
+        try:
+            parts = sig.split()
+            side = parts[0]
+            symbol = parts[1]
+            # determine price: find last Close for that symbol in df
+            if "Symbol" in df.columns:
+                g = df[df["Symbol"].astype(str).str.upper() == symbol.upper()]
+                if not g.empty:
+                    price = float(g["Close"].iloc[-1])
+                else:
+                    # try lookup token and get ltp from smartapi
+                    token = lookup_token(token_map, "NSE", symbol) or lookup_token(token_map, "NFO", symbol) or lookup_token(token_map, "MCX", symbol)
+                    if token:
+                        ltp_data = api.ltpData("NSE", symbol, token)
+                        price = float(ltp_data["data"]["ltp"])
+                    else:
+                        print("⚠ Price not found for", symbol, "; skipping open trade.")
+                        continue
+            else:
+                price = float(df["Close"].iloc[-1])
+            open_trade_in_sheet(ws_trade, symbol, side, price, notes="signal_opened")
+        except Exception as e:
+            print("⚠ error opening trade for signal", sig, e)
+
+    # 7) manage open trades (check SL/TP)
+    try:
+        manage_open_trades_with_sheet(ws_trade, token_map, api)
+    except Exception as e:
+        print("⚠ manage trades error:", e)
+
+    # 8) ATM options summary update & telegram
+    # Prepare ATM strikes for the five main indices if present in sheet
+    indices_to_try = [
+        {"name": "NIFTY", "step": 50, "exch": "NSE"},
+        {"name": "BANKNIFTY", "step": 100, "exch": "NSE"},
+        {"name": "FINNIFTY", "step": 50, "exch": "NSE"},
+        {"name": "MIDCPNIFTY", "step": 100, "exch": "NSE"},
+        {"name": "SENSEX", "step": 100, "exch": "BSE"},
+    ]
+    lines = ["✅ ATM Options Algo Run"]
+    for idx in indices_to_try:
+        try:
+            symbol = idx["name"]
+            if "Symbol" in df.columns and symbol in df["Symbol"].values:
+                spot = float(df[df["Symbol"] == symbol]["Close"].iloc[-1])
+            else:
+                token = lookup_token(token_map, idx["exch"], symbol)
+                if token:
+                    ltp_data = api.ltpData(idx["exch"], symbol, token)
+                    spot = float(ltp_data["data"]["ltp"])
+                else:
+                    lines.append(f"{symbol} Error: token not found")
+                    continue
+            step = idx["step"]
+            atm = round(spot / step) * step
+            # build option trading symbol formats - user may have different naming in master
+            ce_sym = f"{symbol}{atm}CE"
+            pe_sym = f"{symbol}{atm}PE"
+            # lookup tokens
+            ce_token = lookup_token(token_map, "NFO", ce_sym)
+            pe_token = lookup_token(token_map, "NFO", pe_sym)
+            ce_ltp = pe_ltp = "(no-data)"
+            if ce_token:
+                d = api.ltpData("NFO", ce_sym, ce_token)
+                if d and d.get("data"):
+                    ce_ltp = d["data"].get("ltp")
+            if pe_token:
+                d = api.ltpData("NFO", pe_sym, pe_token)
+                if d and d.get("data"):
+                    pe_ltp = d["data"].get("ltp")
+            lines.append(f"{symbol} Spot:{spot} Strike:{atm} CE:{ce_ltp} PE:{pe_ltp}")
+        except Exception as e:
+            lines.append(f"{symbol} Error: {e}")
+
+    # update summary sheet A1.. and send telegram one message
+    try:
+        summary_ws.update("A1", [["Index Summary"]])
+        summary_ws.update("A2", [[l] for l in lines[1:]])
+    except Exception:
+        pass
+
+    send_telegram_message("\n".join(lines))
+    print("✅ Run completed.")
+
+if __name__ == "__main__":
+    main()
