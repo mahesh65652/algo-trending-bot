@@ -1,4 +1,3 @@
-# main.py
 import os
 import json
 import time
@@ -9,21 +8,21 @@ import requests
 import pandas as pd
 import pyotp
 
-# try import SmartConnect from both package names
+# Try import SmartConnect from both package names
 try:
     from SmartApi import SmartConnect
-except Exception:
+except ImportError:
     try:
         from smartapi import SmartConnect
-    except Exception:
-        SmartConnect = None  # will error later
+    except ImportError:
+        SmartConnect = None  # Will be handled with an error message later
 
 # gspread/oauth helper
 try:
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
     from gspread.exceptions import APIError, WorksheetNotFound
-except Exception:
+except ImportError:
     gspread = None
 
 # ---------- CONFIG (environment variable names) ----------
@@ -64,11 +63,11 @@ def gs_auth_from_env():
         raise Exception("gspread/oauth2client not installed.")
     raw = os.getenv(GSHEET_CREDS_ENV)
     if not raw:
-        raise Exception(f"{GSHEET_CREDS_ENV} missing in env")
+        raise Exception(f"❌ {GSHEET_CREDS_ENV} missing in env")
     try:
         creds_dict = json.loads(raw)
     except Exception as e:
-        raise Exception(f"GSHEET_CREDS_JSON invalid JSON: {e}")
+        raise Exception(f"❌ GSHEET_CREDS_JSON invalid JSON: {e}")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
@@ -82,7 +81,7 @@ def open_sheet(client, sheet_id):
         except APIError as e:
             print("Google Sheets APIError:", e)
             time.sleep(2 + attempt * 2)
-    raise Exception("Failed to open Google Sheet.")
+    raise Exception("❌ Failed to open Google Sheet.")
 
 def read_sheet_values(ss, sheet_name):
     try:
@@ -91,7 +90,7 @@ def read_sheet_values(ss, sheet_name):
     except WorksheetNotFound:
         raise
     except Exception as e:
-        print("Error reading sheet:", e)
+        print("❌ Error reading sheet:", e)
         return []
 
 def ensure_trade_log_sheet(ss, name="TRADE_LOG"):
@@ -135,6 +134,8 @@ def download_master_json():
 
 def build_token_map(master_json):
     m = {}
+    if not master_json:
+        return m
     for item in master_json:
         exch = (item.get("exch_seg") or "").upper()
         sym_candidates = []
@@ -182,6 +183,8 @@ def calculate_basic_indicators_from_values(values_table):
     for col in ["Open", "High", "Low", "Close"]:
         if col in df.columns:
             df[col] = ensure_numeric_series(df[col])
+    
+    # Calculate indicators
     df["SMA_14"] = df["Close"].rolling(window=14, min_periods=1).mean()
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).rolling(window=14, min_periods=1).mean()
@@ -192,6 +195,7 @@ def calculate_basic_indicators_from_values(values_table):
     exp2 = df["Close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = exp1 - exp2
     df["MACD_SIGNAL"] = df["MACD"].ewm(span=9, adjust=False).mean()
+    
     return df
 
 # ---------- Signals ----------
@@ -240,3 +244,72 @@ def generate_options_signals(df):
             signals.append(f"SELL {sym}")
     return signals
 
+# ---------- Main Execution ----------
+if __name__ == "__main__":
+    print("--- Starting Angel One Bot ---")
+    
+    # 1. Authenticate with Google Sheets
+    try:
+        gs_client = gs_auth_from_env()
+        gs_sheet = open_sheet(gs_client, os.getenv(GSHEET_ID_ENV))
+        trade_log_sheet = ensure_trade_log_sheet(gs_sheet)
+    except Exception as e:
+        print(f"❌ Google Sheets setup failed: {e}")
+        send_telegram_message(f"🚨 Google Sheets Error: {e}")
+        exit(1)
+        
+    # 2. Authenticate with Angel One
+    if SmartConnect is None:
+        print("❌ SmartApi library not installed. Exiting.")
+        send_telegram_message("🚨 SmartApi library not installed. Exiting.")
+        exit(1)
+    
+    try:
+        smart = SmartConnect(api_key=os.getenv(ANGEL_API_KEY_ENV))
+        # Use TOTP for session generation, which is more secure
+        session_data = smart.generateSession(
+            os.getenv(ANGEL_CLIENT_CODE_ENV),
+            os.getenv(ANGEL_CLIENT_PWD_ENV),
+            pyotp.TOTP(os.getenv(ANGEL_TOTP_SECRET_ENV)).now()
+        )
+        if 'data' not in session_data:
+            raise Exception("Session data not returned.")
+        print("✅ Angel One session generated successfully.")
+    except Exception as e:
+        print(f"❌ Angel One login failed: {e}")
+        send_telegram_message(f"🚨 Angel One Login Failed: {e}")
+        exit(1)
+        
+    # 3. Get Instruments Master Data
+    token_map = build_token_map(download_master_json())
+    if not token_map:
+        print("❌ Failed to get master instrument data.")
+        send_telegram_message("🚨 Failed to get master instrument data.")
+        exit(1)
+        
+    # 4. Read data from Google Sheet (if any)
+    try:
+        index_data = read_sheet_values(gs_sheet, "INDEX_DATA")
+        options_data = read_sheet_values(gs_sheet, "OPTIONS_DATA")
+    except WorksheetNotFound:
+        print("⚠️ Required worksheets not found. Skipping signal generation.")
+        index_data = []
+        options_data = []
+        
+    # 5. Calculate indicators and generate signals
+    index_df = calculate_basic_indicators_from_values(index_data)
+    options_df = calculate_basic_indicators_from_values(options_data)
+    
+    index_signals = generate_index_signals(index_df)
+    options_signals = generate_options_signals(options_df)
+    
+    # 6. Send signals to Telegram
+    if index_signals:
+        signal_text = "🟢 **INDEX SIGNALS**\n" + "\n".join(index_signals)
+        send_telegram_message(signal_text)
+    
+    if options_signals:
+        signal_text = "✨ **OPTIONS SIGNALS**\n" + "\n".join(options_signals)
+        send_telegram_message(signal_text)
+        
+    print("--- Bot execution complete ---")
