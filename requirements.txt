@@ -1,4 +1,4 @@
-SmartApi
+smartapi-python
 gspread
 oauth2client
 pyotp
