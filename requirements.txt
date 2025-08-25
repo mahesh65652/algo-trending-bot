@@ -1,8 +1,7 @@
+SmartApi
 gspread
 oauth2client
 pyotp
 pandas
 requests
-SmartApi
 pycryptodome
-SmartApi
