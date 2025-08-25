@@ -4,9 +4,4 @@ pyotp
 pandas
 requests
 SmartApi
-logzero
-
-pandas
-yfinance
-gspread
-oauth2client
+pycryptodome
