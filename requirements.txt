@@ -1,0 +1,7 @@
+SmartApi
+gspread
+oauth2client
+pyotp
+pandas
+requests
+pycryptodome
