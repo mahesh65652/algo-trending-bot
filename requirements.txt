@@ -5,3 +5,4 @@ pandas
 requests
 SmartApi
 pycryptodome
+SmartApi
