@@ -30,6 +30,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create credentials.json
+        run: echo '${{ secrets.GSHEET_CREDS_JSON }}' > credentials.json
+
       - name: Run Angel One NSE/BSE Bot
         env:
           ANGEL_API_KEY: ${{ secrets.ANGEL_API_KEY }}
@@ -37,7 +40,6 @@ jobs:
           ANGEL_CLIENT_PWD: ${{ secrets.ANGEL_CLIENT_PWD }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          GSHEET_CREDS_JSON: ${{ secrets.GSHEET_CREDS_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
