@@ -1,6 +1,0 @@
-SmartApi
-gspread
-oauth2client
-pandas
-requests
-pycryptodome
