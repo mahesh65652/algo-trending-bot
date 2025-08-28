@@ -34,7 +34,7 @@ def send_telegram_message(msg, gs_client=None):
         return False
     try:
         requests.post(
-            f"https://api.telegram.com/bot{tok}/sendMessage",
+            f"https://api.telegram.org/bot{tok}/sendMessage",
             data={"chat_id": chat, "text": msg},
             timeout=10,
         )
@@ -59,12 +59,19 @@ def get_google_sheet_client():
         logging.error(f"Failed to authorize Google Sheet client: {e}")
         return None
 
+# --- UPDATED: 'get_all_values()' to avoid header issues ---
 def read_google_sheet_data(client, sheet_id, sheet_name):
     try:
         sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
-        data = sheet.get_all_records()  # अब यह सभी कॉलम पढ़ता है
+        data = sheet.get_all_values() # अब यह सभी कॉलम पढ़ता है
+        if not data:
+            logging.info("Google Sheet is empty.")
+            return []
+            
+        headers = data[0]
+        records = [dict(zip(headers, row)) for row in data[1:]]
         logging.info(f"Google Sheet data from '{sheet_name}' read successful.")
-        return data
+        return records
     except WorksheetNotFound:
         logging.warning(f"Worksheet '{sheet_name}' not found. Skipping.")
         return None
@@ -72,13 +79,14 @@ def read_google_sheet_data(client, sheet_id, sheet_name):
         logging.error(f"Google Sheet data read failed for '{sheet_name}': {e}")
         return None
 
+# --- UPDATED: 'ws.update()' syntax ---
 def update_google_sheet_cell(client, sheet_id, sheet_name, cell, content):
     try:
         ws = client.open_by_key(sheet_id).worksheet(sheet_name)
         if isinstance(content, list):
-            ws.update(cell, content)
+            ws.update(values=content, range_name=cell)
         else:
-            ws.update(cell, [[content]])
+            ws.update(values=[[content]], range_name=cell)
         logging.info(f"Sheet '{sheet_name}' updated at cell {cell}.")
     except Exception as e:
         logging.error(f"Sheet update failed for '{sheet_name}': {e}")
@@ -101,7 +109,6 @@ def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet
         logging.error(f"Failed to open worksheet for price update: {e}")
         return None
 
-    # Google Sheets में 'CLOSE' कॉलम (कॉलम B) के लिए डेटा तैयार करें
     prices_to_update = []
     
     for _, row in symbols_df.iterrows():
@@ -114,20 +121,19 @@ def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet
             
             if ltp_data and 'data' in ltp_data and 'ltp' in ltp_data['data']:
                 price = ltp_data['data']['ltp']
-                prices_to_update.append([price]) # यह B कॉलम में डालने के लिए लिस्ट बनाता है
+                prices_to_update.append([price])
                 logging.info(f"Fetched LTP for {row['SYMBOL']}: {price}")
             else:
-                prices_to_update.append([""]) # अगर LTP नहीं मिलता तो खाली रखें
+                prices_to_update.append([""])
                 logging.warning(f"Failed to fetch LTP for {row['SYMBOL']}. Appending empty string.")
-            time.sleep(0.2) # API दर सीमा से बचने के लिए
+            time.sleep(0.2)
         except Exception as e:
             prices_to_update.append([""])
             logging.error(f"Error fetching LTP for {row['SYMBOL']}: {e}")
 
-    # B2 से शुरू करके 'CLOSE' कॉलम को अपडेट करें
     if prices_to_update:
         try:
-            ws.update(f'B2:B{1 + len(prices_to_update)}', prices_to_update)
+            ws.update(values=prices_to_update, range_name=f'B2:B{1 + len(prices_to_update)}')
             logging.info(f"Successfully updated 'CLOSE' column with {len(prices_to_update)} prices.")
         except Exception as e:
             logging.error(f"Failed to update 'CLOSE' column in sheet: {e}")
@@ -167,7 +173,6 @@ def get_tokens_from_api():
 
 def calculate_indicators(df):
     try:
-        # यहाँ df में अब लाइव डेटा है
         df = df.replace("", np.nan).dropna(subset=["SYMBOL", "CLOSE"])
         df['CLOSE'] = pd.to_numeric(df['CLOSE'], errors='coerce')
         df = df.dropna(subset=['CLOSE'])
@@ -192,7 +197,6 @@ def calculate_indicators(df):
 def generate_signals(df):
     signals = []
     if not df.empty:
-        # यह सुनिश्चित करें कि गणना के लिए पर्याप्त डेटा है
         if len(df) < 30:
             logging.info("Not enough data to generate signals.")
             return []
@@ -265,7 +269,6 @@ if __name__ == "__main__":
         update_google_sheet_cell(gs_client, GSHEET_ID, SHEET_NAME, "G2", "⚠️ Token data not fetched")
         exit(1)
 
-    # शीट से शुरुआती डेटा पढ़ें ताकि SYMBOLS मिल सकें
     sheet_data = read_google_sheet_data(gs_client, GSHEET_ID, SHEET_NAME)
     if not sheet_data:
         update_google_sheet_cell(gs_client, GSHEET_ID, SHEET_NAME, "G2", "⚠️ Google Sheet empty or invalid")
@@ -277,16 +280,13 @@ if __name__ == "__main__":
         update_google_sheet_cell(gs_client, GSHEET_ID, SHEET_NAME, "G2", "No symbols found.")
         exit(0)
 
-    # SYMBOLS को Angel One टोकन जानकारी के साथ मिलाएं
     df['symboltoken'] = df['SYMBOL'].apply(lambda s: tokens.get(s, {}).get('token'))
     df['exch_seg'] = df['SYMBOL'].apply(lambda s: tokens.get(s, {}).get('exch_seg'))
     df = df.dropna(subset=['SYMBOL', 'symboltoken', 'exch_seg'])
 
-    # --- नया: लाइव कीमतें प्राप्त करें और शीट को अपडेट करें ---
     if not df.empty:
         get_live_prices_and_update_sheet(angel_api, df, gs_client, GSHEET_ID, SHEET_NAME)
     
-    # अपडेटेड डेटा को फिर से पढ़ें ताकि गणना सही हो
     updated_sheet_data = read_google_sheet_data(gs_client, GSHEET_ID, SHEET_NAME)
     if not updated_sheet_data:
         logging.error("Failed to re-read updated sheet data.")
@@ -294,7 +294,6 @@ if __name__ == "__main__":
         
     df_updated = pd.DataFrame(updated_sheet_data)
 
-    # अब इंडिकेटर्स की गणना करें
     df_with_indicators = calculate_indicators(df_updated)
     signals = generate_signals(df_with_indicators)
     logging.info(f"Generated signals: {signals}")
