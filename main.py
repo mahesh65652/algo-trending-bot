@@ -317,5 +317,3 @@ if __name__ == "__main__":
         send_telegram_message("ℹ️ No trading signals generated in this run.", gs_client)
     
     logging.info("Bot run completed.")
-
----
