@@ -30,7 +30,7 @@ def send_telegram_message(msg, gs_client=None):
     tok = os.getenv("TELEGRAM_BOT_TOKEN")
     chat = os.getenv("TELEGRAM_CHAT_ID")
     if not tok or not chat:
-        logging.warning("Telegram credentials missing.")
+        logging.warning("Telegram credentials missing. Skipping message.")
         return False
     try:
         requests.post(
@@ -59,16 +59,19 @@ def get_google_sheet_client():
         logging.error(f"Failed to authorize Google Sheet client: {e}")
         return None
 
-# --- UPDATED: 'get_all_values()' to avoid header issues ---
 def read_google_sheet_data(client, sheet_id, sheet_name):
     try:
         sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
-        data = sheet.get_all_values() # अब यह सभी कॉलम पढ़ता है
-        if not data:
-            logging.info("Google Sheet is empty.")
-            return []
+        data = sheet.get_all_values()
+        if not data or len(data) < 2:
+            logging.info(f"Google Sheet '{sheet_name}' is empty or has no data rows.")
+            return None
             
-        headers = data[0]
+        headers = [h.strip().upper() for h in data[0]]
+        if "SYMBOL" not in headers:
+            logging.error("❌ 'SYMBOL' column not found in Google Sheet. Please check the header name.")
+            return None
+        
         records = [dict(zip(headers, row)) for row in data[1:]]
         logging.info(f"Google Sheet data from '{sheet_name}' read successful.")
         return records
@@ -79,7 +82,6 @@ def read_google_sheet_data(client, sheet_id, sheet_name):
         logging.error(f"Google Sheet data read failed for '{sheet_name}': {e}")
         return None
 
-# --- UPDATED: 'ws.update()' syntax ---
 def update_google_sheet_cell(client, sheet_id, sheet_name, cell, content):
     try:
         ws = client.open_by_key(sheet_id).worksheet(sheet_name)
@@ -91,23 +93,21 @@ def update_google_sheet_cell(client, sheet_id, sheet_name, cell, content):
     except Exception as e:
         logging.error(f"Sheet update failed for '{sheet_name}': {e}")
 
-# --- नया फ़ंक्शन जोड़ा गया: लाइव कीमत प्राप्त करें और शीट में अपडेट करें ---
 def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet_name):
     if not api:
         logging.warning("Angel One API not logged in. Skipping live price fetch.")
-        return None
+        return False
     
-    # यह सुनिश्चित करने के लिए कि SYMBOL, symboltoken, और exch_seg मौजूद हैं
     required_cols = ['SYMBOL', 'symboltoken', 'exch_seg']
     if not all(col in symbols_df.columns for col in required_cols):
         logging.error("Required columns for price fetch are missing.")
-        return None
+        return False
 
     try:
         ws = gs_client.open_by_key(sheet_id).worksheet(sheet_name)
     except Exception as e:
         logging.error(f"Failed to open worksheet for price update: {e}")
-        return None
+        return False
 
     prices_to_update = []
     
@@ -125,7 +125,7 @@ def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet
                 logging.info(f"Fetched LTP for {row['SYMBOL']}: {price}")
             else:
                 prices_to_update.append([""])
-                logging.warning(f"Failed to fetch LTP for {row['SYMBOL']}. Appending empty string.")
+                logging.warning(f"Failed to fetch LTP for {row['SYMBOL']}.")
             time.sleep(0.2)
         except Exception as e:
             prices_to_update.append([""])
@@ -137,7 +137,7 @@ def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet
             logging.info(f"Successfully updated 'CLOSE' column with {len(prices_to_update)} prices.")
         except Exception as e:
             logging.error(f"Failed to update 'CLOSE' column in sheet: {e}")
-            return None
+            return False
     return True
 
 def get_tokens_from_api():
@@ -155,8 +155,10 @@ def get_tokens_from_api():
             return {}
 
         df = pd.DataFrame(records)
+        
+        # Change made here: Only keep Index Options (OPTIDX) and SENSEX
         keep = df[
-            ((df["exch_seg"] == "NFO") & (df["instrumenttype"].isin(["OPTIDX", "FUTIDX", "OPTSTK", "FUTSTK"]))) |
+            ((df["exch_seg"] == "NFO") & (df["instrumenttype"] == "OPTIDX")) |
             ((df["exch_seg"] == "BSE") & (df["symbol"] == "SENSEX"))
         ].copy()
         
@@ -280,6 +282,7 @@ if __name__ == "__main__":
         update_google_sheet_cell(gs_client, GSHEET_ID, SHEET_NAME, "G2", "No symbols found.")
         exit(0)
 
+    # Note: 'SYMBOL' column is now handled safely within read_google_sheet_data
     df['symboltoken'] = df['SYMBOL'].apply(lambda s: tokens.get(s, {}).get('token'))
     df['exch_seg'] = df['SYMBOL'].apply(lambda s: tokens.get(s, {}).get('exch_seg'))
     df = df.dropna(subset=['SYMBOL', 'symboltoken', 'exch_seg'])
