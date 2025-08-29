@@ -14,6 +14,7 @@ import sys
 from gspread.exceptions import WorksheetNotFound, APIError
 import time
 from datetime import datetime, timedelta
+import re  
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
