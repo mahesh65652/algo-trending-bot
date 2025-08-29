@@ -178,14 +178,21 @@ def get_live_prices_and_update_sheet(api, symbols_df, gs_client, sheet_id, sheet
             return False
     return True
 
-# ✅ FIX: Read tokens from a local JSON file
 def get_local_tokens():
     try:
         with open('tokens.json', 'r') as f:
             data = json.load(f)
         
-        tokens_dict = {item['symbol']: item for item in data}
-        
+        tokens_dict = {}
+        for item in data:
+            # Handle potential case variations for NIFTY and BANKNIFTY
+            symbol = item['symbol'].upper()
+            if symbol == 'NIFTY 50':
+                symbol = 'NIFTY'
+            if symbol == 'NIFTY BANK':
+                symbol = 'BANKNIFTY'
+            tokens_dict[symbol] = item
+
         logging.info("✅ Successfully loaded tokens from local file.")
         logging.info(f"Found NIFTY token: {tokens_dict.get('NIFTY')}")
         logging.info(f"Found BANKNIFTY token: {tokens_dict.get('BANKNIFTY')}")
