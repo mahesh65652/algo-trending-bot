@@ -321,3 +321,98 @@ if __name__ == "__main__":
         send_telegram_message("ℹ️ No trading signals generated in this run.", gs_client)
     
     logging.info("Bot run completed.")
+#!/usr/bin/env python3
+import os
+import requests
+import pandas as pd
+import numpy as np
+import gspread
+import json
+from oauth2client.service_account import ServiceAccountCredentials
+from SmartApi import SmartConnect
+import pyotp
+import logging
+from pathlib import Path
+import sys
+from gspread.exceptions import WorksheetNotFound, APIError
+import time
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
+
+# --- CONFIGURATION ---
+GSHEET_ID = os.getenv("GSHEET_ID")
+SHEET_NAME = "LIVE DATA"
+LIVE_TRADING = os.getenv("LIVE_TRADING", "false").strip().lower() in ("1", "true", "yes")
+ORDER_QTY = int(os.getenv("ORDER_QTY", "1"))
+PRODUCT_TYPE = os.getenv("PRODUCT_TYPE", "MIS")
+MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+
+# --- UTILITY FUNCTIONS ---
+def send_telegram_message(msg, gs_client=None):
+    tok = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat = os.getenv("TELEGRAM_CHAT_ID")
+    if not tok or not chat:
+        logging.warning("Telegram credentials missing. Skipping message.")
+        return False
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{tok}/sendMessage",
+            data={"chat_id": chat, "text": msg},
+            timeout=10,
+        )
+        logging.info("Telegram message sent successfully.")
+        return True
+    except Exception as e:
+        logging.error(f"Telegram message failed: {e}")
+        if gs_client:
+            try:
+                ws = gs_client.open_by_key(GSHEET_ID).worksheet(SHEET_NAME)
+                ws.update("H2", "⚠️ Telegram Failed")
+            except Exception as ee:
+                logging.error(f"Sheet update failed for Telegram error: {ee}")
+        return False
+
+def get_google_sheet_client():
+    try:
+        scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        logging.error(f"Failed to authorize Google Sheet client: {e}")
+        return None
+
+# ✅ बदलाव: headers normalize + QUANTITY fallback add
+def read_google_sheet_data(client, sheet_id, sheet_name):
+    try:
+        sheet = client.open_by_key(sheet_id).worksheet(sheet_name)
+        data = sheet.get_all_records()
+        if not data:
+            logging.info(f"Google Sheet '{sheet_name}' is empty or has no data rows.")
+            return None
+
+        # Normalize headers (uppercase + strip)
+        df = pd.DataFrame(data)
+        df.columns = [c.strip().upper() for c in df.columns]
+
+        # Ensure mandatory columns exist
+        if "SYMBOL" not in df.columns:
+            logging.error("❌ 'SYMBOL' column missing in Google Sheet.")
+            return None
+
+        if "QUANTITY" not in df.columns:
+            logging.warning("⚠️ 'QUANTITY' column missing. Adding default ORDER_QTY for all rows.")
+            df["QUANTITY"] = ORDER_QTY
+
+        logging.info(f"Google Sheet '{sheet_name}' read successful with {len(df)} rows.")
+        logging.info(f"Detected columns: {list(df.columns)}")
+        logging.info(f"First rows:\n{df.head().to_string(index=False)}")
+
+        return df.to_dict("records")
+
+    except WorksheetNotFound:
+        logging.warning(f"Worksheet '{sheet_name}' not found. Skipping.")
+        return None
+    except Exception as e:
+        logging.error(f"Google Sheet data read failed for '{sheet_name}': {e}")
+        return None
